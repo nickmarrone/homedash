@@ -12,6 +12,26 @@ from app.models import CalendarSource, Event, EventInstance
 settings = get_settings()
 
 
+def seed_ics_source_from_settings(session: Session) -> None:
+    """Ensure HOMEDASH_ICS_URL (if set) is registered as a calendar_sources
+    row, since nothing else creates one in Phase 1 (no source-management UI
+    yet). The .env value is treated as the source of truth: on a URL change,
+    update the existing row rather than creating a duplicate."""
+    if not settings.ics_url:
+        return
+
+    source = session.exec(select(CalendarSource).where(CalendarSource.kind == "ics")).first()
+    if source is None:
+        session.add(CalendarSource(kind="ics", url=settings.ics_url, enabled=True))
+        session.commit()
+    elif source.url != settings.ics_url:
+        source.url = settings.ics_url
+        source.resource_etag = None
+        source.enabled = True
+        session.add(source)
+        session.commit()
+
+
 def _vevents_to_calendar(vevents: list[VEvent]) -> Calendar:
     calendar = Calendar()
     calendar.add("prodid", "-//HomeDash//ICS Sync//EN")

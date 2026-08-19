@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from sqlmodel import Session
 
 from app.api.routes import router
+from app.calendars.sync import seed_ics_source_from_settings
 from app.config import get_settings
-from app.db import run_migrations
+from app.db import engine, run_migrations
 from app.scheduler import start_scheduler, stop_scheduler
 from app.sse import broadcaster
 from app.weather.client import refresh_weather
@@ -19,6 +21,8 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     run_migrations()
+    with Session(engine) as session:
+        seed_ics_source_from_settings(session)
     broadcaster.bind_loop(asyncio.get_running_loop())
     await asyncio.get_running_loop().run_in_executor(None, refresh_weather)
     start_scheduler()
