@@ -280,4 +280,11 @@ class TestAdapterDispatch:
 
     def test_unknown_kind_is_rejected(self):
         with pytest.raises(ValueError, match="unsupported kind"):
-            sync_module.build_adapter(self._source(kind="google"))
+            sync_module.build_adapter(self._source(kind="carrier-pigeon"))
+
+    def test_google_needs_a_refresh_token(self, monkeypatch):
+        self._with_credentials(monkeypatch, {"g": {"client_id": "a", "client_secret": "b"}})
+        with pytest.raises(ValueError, match="refresh_token"):
+            sync_module.build_adapter(
+                self._source(kind="google", calendar_id="x@group.calendar.google.com", credentials_ref="g")
+            )

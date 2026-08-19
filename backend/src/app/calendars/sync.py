@@ -9,6 +9,8 @@ from sqlmodel import Session, select
 
 from app.calendars.base import CalendarSource as CalendarSourceProtocol
 from app.calendars.caldav_source import CalDAVCalendarSource
+from app.calendars.google_auth import GoogleCredentials
+from app.calendars.google_source import GoogleCalendarSource
 from app.calendars.colors import color_for_index
 from app.calendars.localtime import as_utc
 from app.calendars.ics import ICSCalendarSource
@@ -167,6 +169,16 @@ def build_adapter(source: CalendarSource) -> CalendarSourceProtocol:
             url=source.url,
             username=blob["username"],
             password=blob["password"],
+            window_start=window_start,
+            window_end=window_end,
+            sync_state=source.sync_state,
+        )
+    if source.kind == "google":
+        blob = _credentials(source)
+        window_start, window_end = sync_window()
+        return GoogleCalendarSource(
+            calendar_id=source.calendar_id or "",
+            credentials=GoogleCredentials.from_blob(blob, source.name),
             window_start=window_start,
             window_end=window_end,
             sync_state=source.sync_state,
