@@ -21,6 +21,36 @@ export interface AgendaItem {
 	calendar: AgendaCalendar | null;
 }
 
+/** One item as it appears inside a calendar grid: an agenda item plus where
+ * it sits relative to the day it is being rendered on. */
+export interface CalendarGridItem extends AgendaItem {
+	continues_before: boolean;
+	continues_after: boolean;
+}
+
+export interface CalendarDay {
+	date: string;
+	day_of_month: number;
+	weekday_short: string;
+	/** False for the padding days a month grid needs to stay rectangular. */
+	in_period: boolean;
+	is_today: boolean;
+	items: CalendarGridItem[];
+}
+
+export type CalendarViewName = 'agenda' | 'day' | 'week' | 'month';
+
+export interface CalendarView {
+	view: string;
+	anchor: string;
+	title: string;
+	today: string;
+	/** The backend does the date arithmetic, so navigation needs none here. */
+	prev_anchor: string;
+	next_anchor: string;
+	days: CalendarDay[];
+}
+
 export interface WeatherCurrent {
 	// Open-Meteo's own "now" stamp, in the coordinates' local timezone because
 	// the backend calls it with timezone=auto. HourlyForecast anchors off this
@@ -81,6 +111,17 @@ export async function fetchAgenda(): Promise<AgendaItem[]> {
 export async function fetchCalendars(): Promise<AgendaCalendar[]> {
 	const response = await fetch('/api/calendars');
 	if (!response.ok) throw new Error(`calendars fetch failed: ${response.status}`);
+	return response.json();
+}
+
+export async function fetchCalendarView(
+	view: Exclude<CalendarViewName, 'agenda'>,
+	anchor?: string
+): Promise<CalendarView> {
+	const query = new URLSearchParams({ view });
+	if (anchor) query.set('anchor', anchor);
+	const response = await fetch(`/api/calendar?${query}`);
+	if (!response.ok) throw new Error(`calendar fetch failed: ${response.status}`);
 	return response.json();
 }
 
