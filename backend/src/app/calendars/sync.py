@@ -1,14 +1,16 @@
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import recurring_ical_events
 from icalendar import Calendar
 from icalendar.cal import Event as VEvent
 from sqlmodel import Session, select
 
+from app.calendars.base import CalendarSource as CalendarSourceProtocol
 from app.calendars.colors import color_for_index
 from app.calendars.ics import ICSCalendarSource
-from app.config import get_settings
+from app.config import CalendarConfig, get_settings, source_key
 from app.models import CalendarSource, Event, EventInstance
 
 logger = logging.getLogger(__name__)
@@ -31,40 +33,60 @@ def _delete_source_events(session: Session, source_id: int) -> None:
     session.flush()
 
 
-def seed_ics_calendars_from_settings(session: Session) -> None:
-    """Reconcile the calendar_sources table against HOMEDASH_ICS_CALENDARS.
+GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/{}/events"
 
-    The env var is the source of truth: rows are matched by URL, colors and
-    display order are assigned from the configured order, and any ICS source
-    no longer listed is deleted along with its events (otherwise a removed
-    calendar's appointments would linger on the panel forever).
+
+def _row_url(calendar: CalendarConfig) -> str:
+    """The URL to store on a source row.
+
+    Google identifies calendars by address, not URL, but the column is NOT
+    NULL and a row that says where it came from is far easier to debug, so
+    Google sources store their API endpoint.
     """
-    # De-duplicate by URL, keeping the first occurrence, so a copy-pasted entry
+    if calendar.kind == "google":
+        return GOOGLE_EVENTS_URL.format(quote(calendar.calendar_id or "", safe=""))
+    return calendar.url or ""
+
+
+def seed_calendars_from_settings(session: Session) -> None:
+    """Reconcile the calendar_sources table against HOMEDASH_CALENDARS.
+
+    The env var is the source of truth: rows are matched by identity key (URL,
+    or calendar address for Google), colors and display order are assigned from
+    the configured order, and any source no longer listed is deleted along with
+    its events - otherwise a removed calendar's appointments would linger on
+    the panel forever.
+    """
+    # De-duplicate by key, keeping the first occurrence, so a copy-pasted entry
     # can't produce two rows fighting over the same feed.
-    configured: dict[str, str] = {}
-    for calendar in settings.ics_calendars:
-        if calendar.url in configured:
+    configured: dict[str, CalendarConfig] = {}
+    for calendar in settings.calendars:
+        if calendar.key in configured:
             logger.warning(
-                "Duplicate URL in HOMEDASH_ICS_CALENDARS; ignoring later entry %r", calendar.name
+                "Duplicate calendar in HOMEDASH_CALENDARS; ignoring later entry %r", calendar.name
             )
             continue
-        configured[calendar.url] = calendar.name
+        configured[calendar.key] = calendar
 
-    existing = session.exec(select(CalendarSource).where(CalendarSource.kind == "ics")).all()
-    by_url = {source.url: source for source in existing}
+    existing = session.exec(select(CalendarSource)).all()
+    by_key = {source_key(s.kind, s.url, s.calendar_id): s for s in existing}
 
-    for index, (url, name) in enumerate(configured.items()):
-        source = by_url.get(url)
+    for index, (key, calendar) in enumerate(configured.items()):
+        source = by_key.get(key)
         if source is None:
-            source = CalendarSource(kind="ics", url=url)
-        source.name = name
+            source = CalendarSource(kind=calendar.kind, url=_row_url(calendar))
+        source.kind = calendar.kind
+        source.url = _row_url(calendar)
+        source.calendar_id = calendar.calendar_id
+        source.credentials_ref = calendar.credentials
+        source.name = calendar.name
         source.color = color_for_index(index)
         source.display_order = index
         source.enabled = True
         session.add(source)
 
     for source in existing:
-        if source.url in configured:
+        if source_key(source.kind, source.url, source.calendar_id) in configured:
             continue
         if source.id is not None:
             _delete_source_events(session, source.id)
@@ -99,11 +121,27 @@ def _occurrence_bounds(occurrence: VEvent) -> tuple[datetime, datetime, bool]:
     return starts_at, ends_at, True
 
 
-def sync_ics_source(session: Session, source: CalendarSource) -> bool:
-    """Fetch, expand, and materialize one ICS calendar source's event
-    instances for the rolling sync window. Returns True if the feed had
-    changed and instances were rewritten."""
-    adapter = ICSCalendarSource(url=source.url, etag=source.resource_etag)
+def build_adapter(source: CalendarSource) -> CalendarSourceProtocol:
+    """The adapter that serves one source's kind, resumed from its sync state."""
+    if source.kind == "ics":
+        return ICSCalendarSource(url=source.url, etag=source.sync_state)
+    raise ValueError(
+        f"calendar source {source.id} has unsupported kind {source.kind!r}"
+    )
+
+
+def sync_source(session: Session, source: CalendarSource) -> bool:
+    """Fetch, expand, and materialize one calendar source's event instances
+    for the rolling sync window. Returns True if the source had changed and
+    instances were rewritten.
+
+    Change detection is the adapter's job; rebuilding is always wholesale.
+    Upserting individual events would be the usual next step, but a full
+    rebuild of a few hundred events is nothing at this scale and it keeps one
+    well-understood materialization path for every kind - which is where sync
+    bugs would otherwise live.
+    """
+    adapter = build_adapter(source)
     vevents = adapter.fetch()
     now = datetime.now(timezone.utc)
 
@@ -151,7 +189,7 @@ def sync_ics_source(session: Session, source: CalendarSource) -> bool:
             )
         )
 
-    source.resource_etag = adapter.etag
+    source.sync_state = adapter.sync_state
     source.last_synced_at = now
     session.add(source)
     session.commit()

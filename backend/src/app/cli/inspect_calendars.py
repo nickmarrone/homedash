@@ -64,15 +64,20 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    calendars = settings.ics_calendars
+    calendars = settings.calendars
     if not calendars:
-        print("No calendars configured. Set HOMEDASH_ICS_CALENDARS (see .env.example).")
+        print("No calendars configured. Set HOMEDASH_CALENDARS (see .env.example).")
         return 1
 
     needs_oauth: list[str] = []
     stays_slow: list[str] = []
 
     for entry in calendars:
+        # A calendar already configured for a fast kind needs no guessing.
+        if entry.kind != "ics":
+            print(f"\n{entry.name}")
+            print(f"  configured: kind {entry.kind!r} - already on the fast path")
+            continue
         provider = identify(entry.url)
         host = urlsplit(entry.url).hostname or "(no host)"
         print(f"\n{entry.name}")

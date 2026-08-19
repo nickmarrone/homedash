@@ -24,11 +24,18 @@ class CalendarSource(SQLModel, table=True):
     color: str = FALLBACK_COLOR  # auto-assigned from the palette, by configured order
     display_order: int = 0
     url: str
+    # Google identifies a calendar by address rather than URL. `url` still
+    # holds that calendar's API endpoint so the row stays self-describing -
+    # and so the column can stay NOT NULL, which on SQLite would otherwise
+    # mean a full table rebuild to relax, with events.source_id pointing at it.
+    calendar_id: str | None = None
     credentials_ref: str | None = None
     member_id: int | None = Field(default=None, foreign_key="members.id")
     enabled: bool = True
     last_synced_at: datetime | None = None
-    resource_etag: str | None = None  # conditional-GET cache for the whole feed
+    # Opaque resume token owned by whichever adapter serves this kind: an
+    # HTTP ETag for ICS, a sync-token for CalDAV and Google.
+    sync_state: str | None = None
 
 
 class Event(SQLModel, table=True):

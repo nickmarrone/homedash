@@ -28,3 +28,8 @@ class ICSCalendarSource:
         self.etag = response.headers.get("ETag")
         self.changed = True
         return self._vevents
+
+    @property
+    def sync_state(self) -> str | None:
+        """The feed's ETag - what a conditional GET resumes from."""
+        return self.etag

@@ -15,13 +15,17 @@ from app.models import CalendarSource, Event, EventInstance
 
 settings = get_settings()
 
-print("=== configured (HOMEDASH_ICS_CALENDARS) ===")
-if not settings.ics_calendars:
+print("=== configured (HOMEDASH_CALENDARS) ===")
+if not settings.calendars:
     print("  (empty!)")
-for entry in settings.ics_calendars:
-    scheme = entry.url.split(":", 1)[0].lower()
-    warn = "  <-- httpx cannot fetch this scheme" if scheme not in ("http", "https") else ""
-    print(f"  {entry.name}: {scheme}://...{warn}")
+for entry in settings.calendars:
+    scheme = (entry.url or "").split(":", 1)[0].lower()
+    warn = (
+        "  <-- httpx cannot fetch this scheme"
+        if entry.kind == "ics" and scheme not in ("http", "https")
+        else ""
+    )
+    print(f"  {entry.name} [{entry.kind}]: {scheme}://...{warn}")
 
 print("\n=== calendar_sources rows ===")
 now = datetime.now(timezone.utc)
@@ -44,16 +48,16 @@ with Session(engine) as session:
         print(f"      url          : {source.url}")
         print(f"      enabled      : {source.enabled}")
         print(f"      last_synced  : {source.last_synced_at}")
-        print(f"      resource_etag: {source.resource_etag!r}")
+        print(f"      sync_state   : {source.sync_state!r}")
         if instances and not future:
             latest = max(i.starts_at for i in instances)
             print(f"      !! all {len(instances)} instances are in the PAST (latest {latest})")
-        if source.resource_etag and not events:
+        if source.sync_state and not events:
             print("      !! has an ETag but no events: a 304 will keep it empty forever.")
             print("         Clear it to force a full refetch (see the note below).")
 
 print("\n=== live fetch check ===")
-for entry in settings.ics_calendars:
+for entry in settings.calendars:
     try:
         r = httpx.get(entry.url, timeout=20.0, follow_redirects=True)
         body = r.text if r.status_code == 200 else ""

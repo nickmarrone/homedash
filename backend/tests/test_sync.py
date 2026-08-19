@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.calendars import sync as sync_module
 from app.calendars.colors import PALETTE
-from app.calendars.sync import seed_ics_calendars_from_settings
+from app.calendars.sync import seed_calendars_from_settings
 from app.config import CalendarConfig, Settings
 from app.models import CalendarSource, Event, EventInstance
 
@@ -29,7 +29,7 @@ def configure(monkeypatch):
             "settings",
             Settings(
                 _env_file=None,
-                ics_calendars=[CalendarConfig(name=n, url=u) for n, u in calendars],
+                calendars=[CalendarConfig(name=n, url=u) for n, u in calendars],
             ),
         )
 
@@ -62,7 +62,7 @@ def add_event(session: Session, source: CalendarSource) -> None:
 
 def test_seeds_calendars_with_palette_colors_in_order(session, configure):
     configure(("Family", "https://example.com/a.ics"), ("Nick", "https://example.com/b.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     rows = sources(session)
     assert [r.name for r in rows] == ["Family", "Nick"]
@@ -73,12 +73,12 @@ def test_seeds_calendars_with_palette_colors_in_order(session, configure):
 
 def test_rename_matches_by_url_and_keeps_events(session, configure):
     configure(("Family", "https://example.com/a.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
     original = sources(session)[0]
     add_event(session, original)
 
     configure(("Household", "https://example.com/a.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     rows = sources(session)
     assert len(rows) == 1
@@ -90,10 +90,10 @@ def test_rename_matches_by_url_and_keeps_events(session, configure):
 
 def test_reordering_recolors(session, configure):
     configure(("Family", "https://example.com/a.ics"), ("Nick", "https://example.com/b.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     configure(("Nick", "https://example.com/b.ics"), ("Family", "https://example.com/a.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     rows = sources(session)
     assert [r.name for r in rows] == ["Nick", "Family"]
@@ -105,7 +105,7 @@ def test_duplicate_urls_collapse_to_one_source(session, configure):
         ("Family", "https://example.com/a.ics"),
         ("Family copy", "https://example.com/a.ics"),
     )
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     rows = sources(session)
     assert len(rows) == 1
@@ -114,13 +114,13 @@ def test_duplicate_urls_collapse_to_one_source(session, configure):
 
 def test_removing_an_entry_deletes_its_events(session, configure):
     configure(("Family", "https://example.com/a.ics"), ("Nick", "https://example.com/b.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
     kept, removed = sources(session)
     add_event(session, kept)
     add_event(session, removed)
 
     configure(("Family", "https://example.com/a.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     rows = sources(session)
     assert [r.name for r in rows] == ["Family"]
@@ -133,12 +133,108 @@ def test_removing_an_entry_deletes_its_events(session, configure):
 
 def test_empty_config_clears_everything(session, configure):
     configure(("Family", "https://example.com/a.ics"))
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
     add_event(session, sources(session)[0])
 
     configure()
-    seed_ics_calendars_from_settings(session)
+    seed_calendars_from_settings(session)
 
     assert sources(session) == []
     assert session.exec(select(Event)).all() == []
     assert session.exec(select(EventInstance)).all() == []
+
+
+@pytest.fixture
+def configure_kinds(monkeypatch):
+    """Point the seeder at an explicit list of already-built configs."""
+
+    def _configure(*calendars: CalendarConfig) -> None:
+        monkeypatch.setattr(
+            sync_module,
+            "settings",
+            Settings(_env_file=None, calendars=list(calendars)),
+        )
+
+    return _configure
+
+
+GOOGLE = CalendarConfig(
+    name="Family",
+    kind="google",
+    calendar_id="abc@group.calendar.google.com",
+    credentials="g",
+)
+CALDAV = CalendarConfig(
+    name="Nick", kind="caldav", url="https://caldav.example/dav/x", credentials="fm"
+)
+
+
+class TestMixedKinds:
+    def test_google_source_records_its_address_and_endpoint(self, session, configure_kinds):
+        configure_kinds(GOOGLE)
+        seed_calendars_from_settings(session)
+
+        row = sources(session)[0]
+        assert row.kind == "google"
+        assert row.calendar_id == "abc@group.calendar.google.com"
+        # The endpoint keeps the row self-describing, and the address is
+        # percent-encoded so the '@' cannot break the path.
+        assert row.url.endswith("/calendars/abc%40group.calendar.google.com/events")
+        assert row.credentials_ref == "g"
+
+    def test_google_calendar_survives_a_rename(self, session, configure_kinds):
+        configure_kinds(GOOGLE)
+        seed_calendars_from_settings(session)
+        original = sources(session)[0]
+        add_event(session, original)
+
+        configure_kinds(GOOGLE.model_copy(update={"name": "Household"}))
+        seed_calendars_from_settings(session)
+
+        rows = sources(session)
+        assert len(rows) == 1 and rows[0].id == original.id
+        assert rows[0].name == "Household"
+        assert session.exec(select(EventInstance)).all()
+
+    def test_kinds_coexist_and_keep_configured_order(self, session, configure_kinds):
+        configure_kinds(
+            GOOGLE,
+            CALDAV,
+            CalendarConfig(name="School", url="https://school.example/e.ics"),
+        )
+        seed_calendars_from_settings(session)
+
+        rows = sources(session)
+        assert [r.kind for r in rows] == ["google", "caldav", "ics"]
+        assert [r.color for r in rows] == [PALETTE[0], PALETTE[1], PALETTE[2]]
+
+    def test_switching_a_calendar_to_a_faster_kind_replaces_it(self, session, configure_kinds):
+        """Moving a feed from ICS to CalDAV is a different source, not a rename.
+
+        The old row and its stale events must go, or the panel would show
+        every appointment twice."""
+        configure_kinds(CalendarConfig(name="Nick", url="https://caldav.example/dav/x"))
+        seed_calendars_from_settings(session)
+        add_event(session, sources(session)[0])
+
+        configure_kinds(CALDAV)
+        seed_calendars_from_settings(session)
+
+        rows = sources(session)
+        assert len(rows) == 1
+        assert rows[0].kind == "caldav"
+        assert len(session.exec(select(Event)).all()) == 0
+
+    def test_a_non_ics_source_is_deleted_when_dropped(self, session, configure_kinds):
+        """The old seeder only ever deleted ICS rows; a dropped Google
+        calendar would have sat on the panel forever."""
+        configure_kinds(GOOGLE, CALDAV)
+        seed_calendars_from_settings(session)
+        add_event(session, sources(session)[0])
+
+        configure_kinds(CALDAV)
+        seed_calendars_from_settings(session)
+
+        rows = sources(session)
+        assert [r.kind for r in rows] == ["caldav"]
+        assert session.exec(select(Event)).all() == []
