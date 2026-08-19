@@ -8,6 +8,7 @@ from sqlmodel import Session
 
 from app.api.routes import router
 from app.calendars.sync import seed_calendars_from_settings
+from app.devices import seed_device_from_settings
 from app.config import get_settings
 from app.db import engine, run_migrations
 from app.scheduler import start_scheduler, stop_scheduler
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI):
     run_migrations()
     with Session(engine) as session:
         seed_calendars_from_settings(session)
+        seed_device_from_settings(session)
     broadcaster.bind_loop(asyncio.get_running_loop())
     await asyncio.get_running_loop().run_in_executor(None, refresh_weather)
     start_scheduler()

@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import date, time
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -67,6 +68,74 @@ class CalendarConfig(BaseModel):
         return source_key(self.kind, self.url, self.calendar_id)
 
 
+def _normalize_hh_mm(value: str) -> str:
+    """Validate a 24-hour "HH:MM" wall-clock time and return it normalized."""
+    try:
+        hour, _, minute = str(value).partition(":")
+        parsed = time(int(hour), int(minute))
+    except ValueError:
+        raise ValueError(
+            f"{value!r} is not a time of day - expected 24-hour \"HH:MM\", e.g. \"06:30\""
+        ) from None
+    return parsed.strftime("%H:%M")
+
+
+class ScreenWindow(BaseModel):
+    """The hours the panel's screen is lit on one kind of day."""
+
+    on: str = "06:30"
+    off: str = "21:30"
+
+    _check_times = field_validator("on", "off")(lambda cls, v: _normalize_hh_mm(v))
+
+    @property
+    def on_time(self) -> time:
+        return time.fromisoformat(self.on)
+
+    @property
+    def off_time(self) -> time:
+        return time.fromisoformat(self.off)
+
+    def lit_at(self, moment: time) -> bool:
+        """Whether the screen is lit at a wall-clock time on this kind of day.
+
+        `on == off` is read as "always on" rather than as a zero-length window:
+        a schedule that blanks the panel permanently is far more likely to be a
+        typo than an intention, and a dark panel gives no clue why.
+        """
+        if self.on_time == self.off_time:
+            return True
+        if self.on_time < self.off_time:
+            return self.on_time <= moment < self.off_time
+        # Wraps past midnight, e.g. on 22:00 / off 06:00.
+        return moment >= self.on_time or moment < self.off_time
+
+
+class ScreenScheduleConfig(BaseModel):
+    """When the wall panel's screen should be lit.
+
+    One window applies to every day unless `weekend` overrides Saturday and
+    Sunday. `on` and `off` are wall-clock times in HOMEDASH_HOME_TIMEZONE,
+    never the panel's own clock - the Pi is a thin client whose OS timezone is
+    deliberately not trusted anywhere in this app.
+
+    An `on` later than `off` is a window crossing midnight, not an error:
+    {"on": "22:00", "off": "06:00"} lights the screen overnight.
+    """
+
+    on: str = "06:30"
+    off: str = "21:30"
+    weekend: ScreenWindow | None = None
+
+    _check_times = field_validator("on", "off")(lambda cls, v: _normalize_hh_mm(v))
+
+    def window_for(self, day: date) -> ScreenWindow:
+        """The window governing one calendar date. Monday is 0, Sunday is 6."""
+        if self.weekend is not None and day.weekday() >= 5:
+            return self.weekend
+        return ScreenWindow(on=self.on, off=self.off)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="HOMEDASH_", env_file=".env", extra="ignore")
 
@@ -98,6 +167,11 @@ class Settings(BaseSettings):
 
     week_starts_on: Literal["sunday", "monday"] = "sunday"
 
+    # The wall panel's screen schedule, seeded onto the devices row at
+    # startup the same way calendars are. See ScreenScheduleConfig.
+    screen_schedule: Annotated[ScreenScheduleConfig, NoDecode] = ScreenScheduleConfig()
+    device_name: str = "panel"
+
     weather_latitude: float = 0.0
     weather_longitude: float = 0.0
     weather_temperature_unit: Literal["fahrenheit", "celsius"] = "fahrenheit"
@@ -123,6 +197,13 @@ class Settings(BaseSettings):
             "HOMEDASH_CALENDAR_CREDENTIALS",
             '{"fastmail": {"username": "me@fastmail.com", "password": "app-password"}}',
             empty={},
+        )
+
+    @field_validator("screen_schedule", mode="before")
+    @classmethod
+    def _parse_screen_schedule(cls, value: Any) -> Any:
+        return _parse_json(
+            value, "HOMEDASH_SCREEN_SCHEDULE", _SCREEN_SCHEDULE_EXAMPLE, empty={}
         )
 
     @model_validator(mode="after")
@@ -158,6 +239,10 @@ class Settings(BaseSettings):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{self.db_path}"
 
+
+_SCREEN_SCHEDULE_EXAMPLE = (
+    '{"on": "06:30", "off": "21:30", "weekend": {"on": "08:00", "off": "22:00"}}'
+)
 
 _CALENDAR_EXAMPLE = '[{"name": "Family", "url": "https://example.com/family.ics"}]'
 
