@@ -46,8 +46,8 @@
 					{#each group.items as item (item.id)}
 						<li>
 							<span
-								class="dot"
-								style:background-color={item.member?.color ?? '#888'}
+								class="bar"
+								style:background-color={item.calendar?.color ?? '#888'}
 								aria-hidden="true"
 							></span>
 							<span class="time">{item.all_day ? 'All day' : formatTime(item.starts_at)}</span>
@@ -90,15 +90,20 @@
 		display: flex;
 		align-items: baseline;
 		gap: 0.75rem;
-		padding: 0.6rem 0;
+		padding: 0.6rem 0 0.6rem 0.75rem;
 		border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+		position: relative;
 	}
 
-	.dot {
-		width: 0.75rem;
-		height: 0.75rem;
-		border-radius: 50%;
-		flex-shrink: 0;
+	/* Full-height accent bar in the owning calendar's color - legible from
+	   across a room in a way a small dot is not. */
+	.bar {
+		position: absolute;
+		left: 0;
+		top: 0.35rem;
+		bottom: 0.35rem;
+		width: 4px;
+		border-radius: 2px;
 	}
 
 	.time {

@@ -19,11 +19,25 @@ frontend/   SvelteKit (adapter-static) - compiles to static files the backend se
 ## Running with Docker (recommended)
 
 ```bash
-cp .env.example .env   # fill in HOMEDASH_HOME_TIMEZONE, HOMEDASH_ICS_URL, lat/lon
+cp .env.example .env   # fill in HOMEDASH_HOME_TIMEZONE, HOMEDASH_ICS_CALENDARS, lat/lon
 docker compose up --build
 ```
 
 Then open http://localhost:8000. `/healthz` returns 200 when the backend is ready.
+
+## Calendars
+
+`HOMEDASH_ICS_CALENDARS` is a JSON list of `{"name", "url"}` entries. Each is
+assigned a color automatically from a fixed palette, in the order you list them,
+and the agenda shows a matching accent bar plus a legend naming the calendars.
+Reordering the list recolors the calendars.
+
+The env var is the source of truth and is reconciled on every startup: entries
+are matched by URL, so renaming or reordering a calendar keeps its events, while
+removing an entry deletes that calendar and its events. There is no calendars UI
+or API - that lands in Phase 2.
+
+Use `[]` for "no calendars"; an empty value is a parse error, not a default.
 
 ## Local development
 

@@ -2,6 +2,8 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from app.calendars.colors import FALLBACK_COLOR
+
 
 class Member(SQLModel, table=True):
     __tablename__ = "members"
@@ -18,6 +20,9 @@ class CalendarSource(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     kind: str  # "ics" | "caldav"
+    name: str = ""
+    color: str = FALLBACK_COLOR  # auto-assigned from the palette, by configured order
+    display_order: int = 0
     url: str
     credentials_ref: str | None = None
     member_id: int | None = Field(default=None, foreign_key="members.id")

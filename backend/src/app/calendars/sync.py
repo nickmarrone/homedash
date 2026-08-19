@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 import recurring_ical_events
@@ -5,31 +6,71 @@ from icalendar import Calendar
 from icalendar.cal import Event as VEvent
 from sqlmodel import Session, select
 
+from app.calendars.colors import color_for_index
 from app.calendars.ics import ICSCalendarSource
 from app.config import get_settings
 from app.models import CalendarSource, Event, EventInstance
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def seed_ics_source_from_settings(session: Session) -> None:
-    """Ensure HOMEDASH_ICS_URL (if set) is registered as a calendar_sources
-    row, since nothing else creates one in Phase 1 (no source-management UI
-    yet). The .env value is treated as the source of truth: on a URL change,
-    update the existing row rather than creating a duplicate."""
-    if not settings.ics_url:
+def _delete_source_events(session: Session, source_id: int) -> None:
+    """Remove every Event and EventInstance belonging to one source."""
+    events = session.exec(select(Event).where(Event.source_id == source_id)).all()
+    if not events:
         return
+    event_ids = [event.id for event in events]
+    instances = session.exec(
+        select(EventInstance).where(EventInstance.event_id.in_(event_ids))
+    ).all()
+    for instance in instances:
+        session.delete(instance)
+    for event in events:
+        session.delete(event)
+    session.flush()
 
-    source = session.exec(select(CalendarSource).where(CalendarSource.kind == "ics")).first()
-    if source is None:
-        session.add(CalendarSource(kind="ics", url=settings.ics_url, enabled=True))
-        session.commit()
-    elif source.url != settings.ics_url:
-        source.url = settings.ics_url
-        source.resource_etag = None
+
+def seed_ics_calendars_from_settings(session: Session) -> None:
+    """Reconcile the calendar_sources table against HOMEDASH_ICS_CALENDARS.
+
+    The env var is the source of truth: rows are matched by URL, colors and
+    display order are assigned from the configured order, and any ICS source
+    no longer listed is deleted along with its events (otherwise a removed
+    calendar's appointments would linger on the panel forever).
+    """
+    # De-duplicate by URL, keeping the first occurrence, so a copy-pasted entry
+    # can't produce two rows fighting over the same feed.
+    configured: dict[str, str] = {}
+    for calendar in settings.ics_calendars:
+        if calendar.url in configured:
+            logger.warning(
+                "Duplicate URL in HOMEDASH_ICS_CALENDARS; ignoring later entry %r", calendar.name
+            )
+            continue
+        configured[calendar.url] = calendar.name
+
+    existing = session.exec(select(CalendarSource).where(CalendarSource.kind == "ics")).all()
+    by_url = {source.url: source for source in existing}
+
+    for index, (url, name) in enumerate(configured.items()):
+        source = by_url.get(url)
+        if source is None:
+            source = CalendarSource(kind="ics", url=url)
+        source.name = name
+        source.color = color_for_index(index)
+        source.display_order = index
         source.enabled = True
         session.add(source)
-        session.commit()
+
+    for source in existing:
+        if source.url in configured:
+            continue
+        if source.id is not None:
+            _delete_source_events(session, source.id)
+        session.delete(source)
+
+    session.commit()
 
 
 def _vevents_to_calendar(vevents: list[VEvent]) -> Calendar:
@@ -77,17 +118,7 @@ def sync_ics_source(session: Session, source: CalendarSource) -> bool:
     calendar = _vevents_to_calendar(vevents)
     occurrences = recurring_ical_events.of(calendar).between(window_start, window_end)
 
-    existing_events = session.exec(select(Event).where(Event.source_id == source.id)).all()
-    if existing_events:
-        event_ids = [event.id for event in existing_events]
-        existing_instances = session.exec(
-            select(EventInstance).where(EventInstance.event_id.in_(event_ids))
-        ).all()
-        for instance in existing_instances:
-            session.delete(instance)
-        for event in existing_events:
-            session.delete(event)
-        session.flush()
+    _delete_source_events(session, source.id)
 
     events_by_uid: dict[str, Event] = {}
     for vevent in vevents:

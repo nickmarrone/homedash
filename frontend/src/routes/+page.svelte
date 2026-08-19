@@ -1,14 +1,28 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fetchAgenda, fetchWeather, subscribeToUpdates, type AgendaItem, type Weather } from '$lib/api';
+	import {
+		fetchAgenda,
+		fetchCalendars,
+		fetchWeather,
+		subscribeToUpdates,
+		type AgendaCalendar,
+		type AgendaItem,
+		type Weather
+	} from '$lib/api';
 	import AgendaList from '$lib/components/AgendaList.svelte';
+	import CalendarLegend from '$lib/components/CalendarLegend.svelte';
 	import WeatherWidget from '$lib/components/WeatherWidget.svelte';
 
 	let items: AgendaItem[] = $state([]);
+	let calendars: AgendaCalendar[] = $state([]);
 	let weather: Weather | null = $state(null);
 
 	async function loadAgenda() {
 		items = await fetchAgenda();
+	}
+
+	async function loadCalendars() {
+		calendars = await fetchCalendars();
 	}
 
 	async function loadWeather() {
@@ -17,10 +31,16 @@
 
 	onMount(() => {
 		loadAgenda();
+		loadCalendars();
 		loadWeather();
 
 		const unsubscribe = subscribeToUpdates((eventType) => {
-			if (eventType === 'events.updated') loadAgenda();
+			// Calendars are reloaded too: a config change adds or removes a
+			// source, and the legend must follow without a page reload.
+			if (eventType === 'events.updated') {
+				loadAgenda();
+				loadCalendars();
+			}
 			if (eventType === 'weather.updated') loadWeather();
 		});
 
@@ -37,6 +57,7 @@
 		<h1>HomeDash</h1>
 		<WeatherWidget {weather} />
 	</header>
+	<CalendarLegend {calendars} />
 	<AgendaList {items} />
 </main>
 

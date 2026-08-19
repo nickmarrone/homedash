@@ -53,7 +53,7 @@ The Pi is a thin client. It runs a browser and a ~50-line screen agent, nothing 
 
 ```
 members            id, name, color, avatar, display_order
-calendar_sources   id, kind (ics|caldav), url, credentials_ref, member_id, enabled
+calendar_sources   id, kind (ics|caldav), name, color, display_order, url, credentials_ref, member_id, enabled
 events             id, source_id, uid, raw_vevent, etag, updated_at
 event_instances    id, event_id, member_id, starts_at, ends_at, all_day, title, location
 devices            id, name, screen_schedule, visible_member_ids, last_seen
@@ -104,6 +104,22 @@ You can point a laptop browser at the container and see this week's real appoint
   HTTP/ETag-aware ICS implementation; `app/calendars/sync.py` does fetch → expand (via
   `recurring_ical_events`) → materialize into `event_instances`, replacing that source's rows
   each sync (simple and correct at this scale).
+- **Multiple calendars, each with its own color.** `HOMEDASH_ICS_CALENDARS` is a JSON list of
+  `{"name", "url"}` objects (parsed by pydantic-settings into `config.CalendarConfig`); it
+  replaced the old single-valued `HOMEDASH_ICS_URL`. `seed_ics_calendars_from_settings()` in
+  `app/calendars/sync.py` reconciles that list into `calendar_sources` on every startup: rows are
+  matched **by URL**, the list is de-duplicated by URL, and any ICS source no longer listed is
+  deleted together with its `events`/`event_instances` — otherwise a removed calendar's
+  appointments would sit on the panel forever. Colors are not user-settable: each calendar takes
+  `PALETTE[index]` from `app/calendars/colors.py` by its position in the env var, so reordering
+  the list recolors the calendars.
+- `GET /api/agenda` joins `event_instances → events → calendar_sources` to attach a
+  `calendar: {id, name, color}` to every item (no `source_id` was denormalized onto
+  `event_instances`; at 200 rows the two-hop join costs nothing and cannot go stale).
+  `GET /api/calendars` serves the legend separately so a calendar with nothing scheduled still
+  appears and swatches don't reshuffle as events come and go. The `member` field is untouched and
+  still always `null` — Phase 2's per-member colors layer on top of source colors rather than
+  replacing them.
 - `app/scheduler.py` runs the ICS sync and weather refresh on `APScheduler` intervals
   (`HOMEDASH_ICS_POLL_INTERVAL_MINUTES`, `HOMEDASH_WEATHER_CACHE_MINUTES`) and publishes
   `events.updated` / `weather.updated` over `app/sse.py`'s broadcaster.

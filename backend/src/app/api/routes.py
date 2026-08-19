@@ -8,7 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
 from app.db import get_session
-from app.models import EventInstance, Member
+from app.models import CalendarSource, Event, EventInstance, Member
 from app.sse import broadcaster
 from app.weather.client import get_cached_weather
 
@@ -30,8 +30,12 @@ def get_agenda(session: SessionDep) -> list[dict]:
     today_start_utc = today_start_local.astimezone(timezone.utc)
 
     rows = session.exec(
-        select(EventInstance, Member)
+        select(EventInstance, Member, CalendarSource)
         .join(Member, EventInstance.member_id == Member.id, isouter=True)
+        # Outer: an instance whose event or source has gone missing should
+        # still render, uncolored, rather than silently vanish from the panel.
+        .join(Event, EventInstance.event_id == Event.id, isouter=True)
+        .join(CalendarSource, Event.source_id == CalendarSource.id, isouter=True)
         .where(EventInstance.starts_at >= today_start_utc)
         .order_by(EventInstance.starts_at)
         .limit(200)
@@ -50,9 +54,27 @@ def get_agenda(session: SessionDep) -> list[dict]:
                 if member
                 else None
             ),
+            "calendar": (
+                {"id": source.id, "name": source.name, "color": source.color}
+                if source
+                else None
+            ),
         }
-        for instance, member in rows
+        for instance, member, source in rows
     ]
+
+
+@router.get("/api/calendars")
+def get_calendars(session: SessionDep) -> list[dict]:
+    """The calendars the agenda can show, for the legend. Served separately
+    from /api/agenda so a calendar with nothing currently scheduled still
+    appears, and so swatches don't reshuffle as events come and go."""
+    sources = session.exec(
+        select(CalendarSource)
+        .where(CalendarSource.enabled == True)  # noqa: E712
+        .order_by(CalendarSource.display_order, CalendarSource.id)
+    ).all()
+    return [{"id": s.id, "name": s.name, "color": s.color} for s in sources]
 
 
 @router.get("/api/weather")

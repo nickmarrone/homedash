@@ -1,9 +1,19 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+class CalendarConfig(BaseModel):
+    """One configured ICS calendar. Colors are not settable here - they are
+    auto-assigned from a fixed palette in configured order (see
+    app.calendars.colors)."""
+
+    name: str
+    url: str
 
 
 class Settings(BaseSettings):
@@ -12,7 +22,8 @@ class Settings(BaseSettings):
     home_timezone: str = "UTC"
     db_path: Path = BACKEND_ROOT / "data" / "homedash.db"
 
-    ics_url: str | None = None
+    # JSON list, e.g. HOMEDASH_ICS_CALENDARS='[{"name": "Family", "url": "https://..."}]'
+    ics_calendars: list[CalendarConfig] = []
     ics_poll_interval_minutes: int = 15
 
     sync_window_past_days: int = 30

@@ -4,6 +4,12 @@ export interface AgendaMember {
 	color: string;
 }
 
+export interface AgendaCalendar {
+	id: number;
+	name: string;
+	color: string;
+}
+
 export interface AgendaItem {
 	id: number;
 	title: string;
@@ -12,6 +18,7 @@ export interface AgendaItem {
 	starts_at: string;
 	ends_at: string;
 	member: AgendaMember | null;
+	calendar: AgendaCalendar | null;
 }
 
 export interface WeatherCurrent {
@@ -48,6 +55,12 @@ export interface Weather {
 export async function fetchAgenda(): Promise<AgendaItem[]> {
 	const response = await fetch('/api/agenda');
 	if (!response.ok) throw new Error(`agenda fetch failed: ${response.status}`);
+	return response.json();
+}
+
+export async function fetchCalendars(): Promise<AgendaCalendar[]> {
+	const response = await fetch('/api/calendars');
+	if (!response.ok) throw new Error(`calendars fetch failed: ${response.status}`);
 	return response.json();
 }
 

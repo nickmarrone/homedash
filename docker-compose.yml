@@ -8,7 +8,9 @@ services:
       - homedash-data:/app/backend/data
     environment:
       HOMEDASH_HOME_TIMEZONE: ${HOMEDASH_HOME_TIMEZONE:-UTC}
-      HOMEDASH_ICS_URL: ${HOMEDASH_ICS_URL:-}
+      # Quoted: the value is JSON, whose braces and quotes would otherwise be
+      # read as YAML flow syntax.
+      HOMEDASH_ICS_CALENDARS: "${HOMEDASH_ICS_CALENDARS:-[]}"
       HOMEDASH_WEATHER_LATITUDE: ${HOMEDASH_WEATHER_LATITUDE:-0}
       HOMEDASH_WEATHER_LONGITUDE: ${HOMEDASH_WEATHER_LONGITUDE:-0}
     restart: unless-stopped
