@@ -129,6 +129,24 @@ You can point a laptop browser at the container and see this week's real appoint
   `events.updated` / `weather.updated` over `app/sse.py`'s broadcaster.
 - Weather is fetched proactively (on startup + on schedule) into an in-process cache;
   `GET /api/weather` only ever reads that cache, never fetches live.
+- **Hourly strip.** The forecast call also requests
+  `hourly=temperature_2m,precipitation_probability`, and
+  `frontend/src/lib/components/HourlyForecast.svelte` renders the next 12 hours as a
+  full-width row under the header: temperatures as plain text, rain probability as one
+  SVG whose `viewBox` is in column units so all bars share a baseline and the strip
+  scales to any panel width. `forecast_hours=48` is set explicitly - without it the
+  hourly block inherits `forecast_days=10` and returns 240 timesteps that get
+  re-serialized on every `/api/weather` read. 48 is deliberately generous so the window
+  cannot run short late in the day whether Open-Meteo anchors the array at the current
+  hour or at local midnight.
+- **Finding "now" in the hourly array without the browser clock.** Open-Meteo is called
+  with `timezone=auto`, so `current.time` (`2026-08-19T13:45`) and `hourly.time`
+  (`2026-08-19T13:00`) are the same fixed-width format in the same timezone. Truncating
+  both to 13 characters makes plain string comparison chronological, so the strip finds
+  its start index with no `Date` and no timezone math - the same reasoning that keeps
+  `format.ts` off `Intl`. The trade-off: `current.time` is frozen at fetch time, so the
+  "Now" column can lag by up to `HOMEDASH_WEATHER_CACHE_MINUTES`, which is invisible at
+  hour granularity.
 - `GET /api/agenda` converts stored UTC instants to `HOMEDASH_HOME_TIMEZONE` at render time.
   The frontend then parses the wall-clock digits straight out of that ISO string (see
   `frontend/src/lib/format.ts`) rather than re-interpreting through the browser's own timezone,

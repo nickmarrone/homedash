@@ -42,9 +42,16 @@ def refresh_weather() -> bool:
             "weather_code,temperature_2m_max,temperature_2m_min,"
             "sunrise,sunset,daylight_duration"
         ),
+        "hourly": "temperature_2m,precipitation_probability",
         "temperature_unit": settings.weather_temperature_unit,
         "timezone": "auto",
         "forecast_days": 10,
+        # Without this the hourly block inherits forecast_days and returns 240
+        # timesteps, re-serialized on every /api/weather read, for a panel that
+        # shows 12. 48 is safe whether Open-Meteo anchors the hourly array at
+        # the current hour or at local midnight: even at 23:00, midnight + 48h
+        # still covers now + 12, so the window can never run short.
+        "forecast_hours": 48,
     }
     air_quality_params = {
         "latitude": settings.weather_latitude,
@@ -73,6 +80,8 @@ def refresh_weather() -> bool:
             # what the numbers actually are.
             "current_units": forecast.get("current_units", {}),
             "daily_units": forecast.get("daily_units", {}),
+            "hourly": forecast.get("hourly", {}),
+            "hourly_units": forecast.get("hourly_units", {}),
             "air_quality": air_quality.get("current", {}),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }

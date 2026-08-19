@@ -22,6 +22,10 @@ export interface AgendaItem {
 }
 
 export interface WeatherCurrent {
+	// Open-Meteo's own "now" stamp, in the coordinates' local timezone because
+	// the backend calls it with timezone=auto. HourlyForecast anchors off this
+	// rather than the browser clock - see lib/format.ts for why.
+	time?: string;
 	temperature_2m?: number;
 	apparent_temperature?: number;
 	relative_humidity_2m?: number;
@@ -39,6 +43,12 @@ export interface WeatherDaily {
 	daylight_duration?: number[];
 }
 
+export interface WeatherHourly {
+	time?: string[];
+	temperature_2m?: number[];
+	precipitation_probability?: number[];
+}
+
 export interface WeatherAirQuality {
 	us_aqi?: number;
 	european_aqi?: number;
@@ -54,9 +64,11 @@ export interface WeatherUnits {
 export interface Weather {
 	current?: WeatherCurrent;
 	daily?: WeatherDaily;
+	hourly?: WeatherHourly;
 	air_quality?: WeatherAirQuality;
 	current_units?: WeatherUnits;
 	daily_units?: WeatherUnits;
+	hourly_units?: WeatherUnits;
 	fetched_at?: string;
 }
 

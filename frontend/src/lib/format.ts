@@ -28,3 +28,14 @@ export function formatDayHeading(dateKeyValue: string): string {
 	if (diffDays === 1) return 'Tomorrow';
 	return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
+
+// Compact hour label for the hourly strip: "2 PM", "11 AM". Same wall-clock
+// digit parsing as formatTime - Open-Meteo hourly timestamps carry no offset
+// and are already local to the configured coordinates.
+export function formatHour(iso: string): string {
+	const match = iso.match(/T(\d{2}):/);
+	if (!match) return iso;
+	const hours = Number(match[1]);
+	const suffix = hours >= 12 ? 'PM' : 'AM';
+	return `${hours % 12 || 12} ${suffix}`;
+}

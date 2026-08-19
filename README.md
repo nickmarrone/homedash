@@ -47,6 +47,19 @@ per device (browser localStorage), so each panel keeps its own filter across
 reboots. Hidden calendars stay in the legend, dimmed with an empty checkbox, so
 they can always be tapped back on.
 
+## Weather
+
+The header shows current conditions, today's high/low, sunrise/sunset, and AQI.
+Under it, a strip covers the next 12 hours: temperature per hour, with rain
+probability as a bar under each one and a percentage printed for hours at 20% or
+above. Everything comes from the single Open-Meteo forecast call the backend
+already makes, refreshed on the `HOMEDASH_WEATHER_CACHE_MINUTES` schedule and
+pushed to the panel over SSE - the page never fetches weather on load.
+
+Set `HOMEDASH_WEATHER_LATITUDE` / `HOMEDASH_WEATHER_LONGITUDE` for your home, and
+`HOMEDASH_WEATHER_TEMPERATURE_UNIT` to `fahrenheit` or `celsius`. Rain is reported
+as a probability, so it reads the same either way. No API key is needed.
+
 ## Local development
 
 Backend:

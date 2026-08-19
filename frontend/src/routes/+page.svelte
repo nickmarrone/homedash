@@ -12,6 +12,7 @@
 	import { loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import AgendaList from '$lib/components/AgendaList.svelte';
 	import CalendarLegend from '$lib/components/CalendarLegend.svelte';
+	import HourlyForecast from '$lib/components/HourlyForecast.svelte';
 	import WeatherWidget from '$lib/components/WeatherWidget.svelte';
 
 	let items: AgendaItem[] = $state([]);
@@ -80,6 +81,7 @@
 		<h1>HomeDash</h1>
 		<WeatherWidget {weather} />
 	</header>
+	<HourlyForecast {weather} />
 	<CalendarLegend {calendars} hidden={hiddenCalendars} onToggle={toggleCalendar} />
 	<AgendaList items={visibleItems} />
 </main>
