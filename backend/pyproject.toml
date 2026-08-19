@@ -26,6 +26,7 @@ dependencies = [
 [project.scripts]
 homedash-backend = "app:main"
 homedash-inspect-calendars = "app.cli.inspect_calendars:main"
+homedash-google-auth = "app.cli.google_auth:main"
 
 [tool.uv.build-backend]
 module-name = "app"
