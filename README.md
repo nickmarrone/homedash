@@ -37,7 +37,10 @@ are matched by URL, so renaming or reordering a calendar keeps its events, while
 removing an entry deletes that calendar and its events. There is no calendars UI
 or API - that lands in Phase 2.
 
-Use `[]` for "no calendars"; an empty value is a parse error, not a default.
+Keep the JSON on a **single line** - no trailing backslashes to wrap it, and no
+backslashes inside the strings, since JSON reads those as escapes. Leave the
+value blank or use `[]` for "no calendars". A malformed value fails at startup
+with a message pointing at the offending character.
 
 Tap a calendar in the legend to hide or show its events. The choice is stored
 per device (browser localStorage), so each panel keeps its own filter across
