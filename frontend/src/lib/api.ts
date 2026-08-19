@@ -45,10 +45,18 @@ export interface WeatherAirQuality {
 	pm2_5?: number;
 }
 
+export interface WeatherUnits {
+	temperature_2m?: string;
+	temperature_2m_max?: string;
+	temperature_2m_min?: string;
+}
+
 export interface Weather {
 	current?: WeatherCurrent;
 	daily?: WeatherDaily;
 	air_quality?: WeatherAirQuality;
+	current_units?: WeatherUnits;
+	daily_units?: WeatherUnits;
 	fetched_at?: string;
 }
 

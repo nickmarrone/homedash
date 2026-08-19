@@ -6,6 +6,9 @@
 	let { weather }: { weather: Weather | null } = $props();
 
 	let current = $derived(weather?.current);
+	// Open-Meteo returns "°F"/"°C" in *_units; strip the degree sign so the
+	// markup keeps its own and we render "72°F" rather than "72°°F".
+	let unit = $derived((weather?.current_units?.temperature_2m ?? '').replace('°', ''));
 	let today = $derived.by(() => {
 		const daily = weather?.daily;
 		if (!daily?.time?.length) return null;
@@ -23,7 +26,7 @@
 		<p class="empty">Weather unavailable.</p>
 	{:else}
 		<div class="now">
-			<span class="temp">{Math.round(current.temperature_2m ?? 0)}°</span>
+			<span class="temp">{Math.round(current.temperature_2m ?? 0)}°{unit}</span>
 			<span class="desc">{weatherDescription(current.weather_code)}</span>
 		</div>
 		{#if today}

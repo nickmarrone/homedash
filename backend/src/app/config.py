@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
 
     weather_latitude: float = 0.0
     weather_longitude: float = 0.0
+    weather_temperature_unit: Literal["fahrenheit", "celsius"] = "fahrenheit"
     weather_cache_minutes: int = 20
 
     frontend_dist: Path = BACKEND_ROOT.parent / "frontend" / "build"

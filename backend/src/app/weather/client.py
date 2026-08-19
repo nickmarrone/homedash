@@ -42,6 +42,7 @@ def refresh_weather() -> bool:
             "weather_code,temperature_2m_max,temperature_2m_min,"
             "sunrise,sunset,daylight_duration"
         ),
+        "temperature_unit": settings.weather_temperature_unit,
         "timezone": "auto",
         "forecast_days": 10,
     }
@@ -67,6 +68,11 @@ def refresh_weather() -> bool:
         _cache = {
             "current": forecast.get("current", {}),
             "daily": forecast.get("daily", {}),
+            # Pass Open-Meteo's own unit labels through rather than deriving
+            # them from the setting, so the panel's degree label always matches
+            # what the numbers actually are.
+            "current_units": forecast.get("current_units", {}),
+            "daily_units": forecast.get("daily_units", {}),
             "air_quality": air_quality.get("current", {}),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
