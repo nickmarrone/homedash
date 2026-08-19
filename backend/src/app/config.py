@@ -1,0 +1,35 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="HOMEDASH_", env_file=".env", extra="ignore")
+
+    home_timezone: str = "UTC"
+    db_path: Path = BACKEND_ROOT / "data" / "homedash.db"
+
+    ics_url: str | None = None
+    ics_poll_interval_minutes: int = 15
+
+    sync_window_past_days: int = 30
+    sync_window_future_days: int = 365
+
+    weather_latitude: float = 0.0
+    weather_longitude: float = 0.0
+    weather_cache_minutes: int = 20
+
+    frontend_dist: Path = BACKEND_ROOT.parent / "frontend" / "build"
+
+    @property
+    def database_url(self) -> str:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{self.db_path}"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

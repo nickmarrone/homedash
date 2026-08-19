@@ -1,0 +1,16 @@
+services:
+  homedash:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - homedash-data:/app/backend/data
+    environment:
+      HOMEDASH_HOME_TIMEZONE: ${HOMEDASH_HOME_TIMEZONE:-UTC}
+      HOMEDASH_ICS_URL: ${HOMEDASH_ICS_URL:-}
+      HOMEDASH_WEATHER_LATITUDE: ${HOMEDASH_WEATHER_LATITUDE:-0}
+      HOMEDASH_WEATHER_LONGITUDE: ${HOMEDASH_WEATHER_LONGITUDE:-0}
+    restart: unless-stopped
+
+volumes:
+  homedash-data:

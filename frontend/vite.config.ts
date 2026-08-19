@@ -1,0 +1,29 @@
+import adapter from '@sveltejs/adapter-static';
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+	plugins: [
+		sveltekit({
+			compilerOptions: {
+				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
+				runes: ({ filename }) =>
+					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
+			},
+
+			// Compiles to static files that FastAPI mounts directly - no Node server on the Pi.
+			adapter: adapter({
+				pages: 'build',
+				assets: 'build',
+				fallback: undefined,
+				strict: true
+			})
+		})
+	],
+	server: {
+		proxy: {
+			'/api': 'http://127.0.0.1:8000',
+			'/healthz': 'http://127.0.0.1:8000'
+		}
+	}
+});

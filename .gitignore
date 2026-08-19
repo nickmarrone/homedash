@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node / SvelteKit
+node_modules/
+frontend/build/
+frontend/.svelte-kit/
+frontend/dist/
+
+# Data
+*.db
+*.db-journal
+backend/data/
+photos/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/

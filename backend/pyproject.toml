@@ -1,0 +1,33 @@
+[project]
+name = "homedash-backend"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Nicholas Marrone", email = "nickmarrone@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.19.1",
+    "apscheduler>=3.11.3",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "icalendar>=7.2.2",
+    "pillow>=12.3.0",
+    "pydantic-settings>=2.15.0",
+    "python-dateutil>=2.9.0.post0",
+    "recurring-ical-events>=3.8.2",
+    "sqlmodel>=0.0.39",
+    "sse-starlette>=3.4.8",
+    "tzdata>=2026.3",
+    "uvicorn[standard]>=0.52.3",
+]
+
+[project.scripts]
+homedash-backend = "app:main"
+
+[tool.uv.build-backend]
+module-name = "app"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
