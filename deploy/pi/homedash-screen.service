@@ -1,0 +1,25 @@
+[Unit]
+Description=HomeDash screen schedule agent
+After=network-online.target homedash-kiosk.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@KIOSK_USER@
+
+# The agent talks to the compositor through wlopm/wlr-randr, which need the
+# same Wayland session the kiosk is running in.
+Environment=XDG_RUNTIME_DIR=/run/user/@KIOSK_UID@
+Environment=WAYLAND_DISPLAY=wayland-0
+
+# --dry-run until the panel's blanking mechanism is confirmed. Run
+#   homedash-screen-agent probe
+# on the Pi, see which one actually darkens the display, then drop --dry-run
+# and add --mechanism NAME here. See deploy/pi/README.md.
+ExecStart=/usr/local/bin/homedash-screen-agent run --server @SERVER_URL@ --dry-run
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
