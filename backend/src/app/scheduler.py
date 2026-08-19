@@ -30,6 +30,12 @@ def run_ics_sync() -> None:
                 if sync_ics_source(session, source):
                     changed = True
             except Exception:
+                # Roll back before moving on: sync_ics_source deletes a
+                # source's rows before rebuilding them, so a failure part-way
+                # through leaves those deletes pending in the session. Without
+                # this, the *next* source's successful commit would flush them
+                # and silently empty the calendar that failed.
+                session.rollback()
                 logger.exception("ICS sync failed for source %s (%s)", source.id, source.url)
         if changed:
             broadcaster.publish("events.updated")
