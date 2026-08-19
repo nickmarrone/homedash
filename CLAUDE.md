@@ -120,6 +120,10 @@ You can point a laptop browser at the container and see this week's real appoint
   appears and swatches don't reshuffle as events come and go. The `member` field is untouched and
   still always `null` — Phase 2's per-member colors layer on top of source colors rather than
   replacing them.
+- Calendar visibility is a **frontend-only, per-device** filter: tapping a legend chip toggles
+  that calendar's events, persisted in `localStorage` via `frontend/src/lib/calendarVisibility.ts`.
+  The agenda API is unchanged and still returns everything - Phase 2 moves this onto the `devices`
+  row, which is the same per-device scope, so no API contract has to change to get there.
 - `app/scheduler.py` runs the ICS sync and weather refresh on `APScheduler` intervals
   (`HOMEDASH_ICS_POLL_INTERVAL_MINUTES`, `HOMEDASH_WEATHER_CACHE_MINUTES`) and publishes
   `events.updated` / `weather.updated` over `app/sse.py`'s broadcaster.

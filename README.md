@@ -39,6 +39,11 @@ or API - that lands in Phase 2.
 
 Use `[]` for "no calendars"; an empty value is a parse error, not a default.
 
+Tap a calendar in the legend to hide or show its events. The choice is stored
+per device (browser localStorage), so each panel keeps its own filter across
+reboots. Hidden calendars stay in the legend, dimmed with an empty checkbox, so
+they can always be tapped back on.
+
 ## Local development
 
 Backend:

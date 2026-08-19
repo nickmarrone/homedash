@@ -9,6 +9,7 @@
 		type AgendaItem,
 		type Weather
 	} from '$lib/api';
+	import { loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import AgendaList from '$lib/components/AgendaList.svelte';
 	import CalendarLegend from '$lib/components/CalendarLegend.svelte';
 	import WeatherWidget from '$lib/components/WeatherWidget.svelte';
@@ -16,6 +17,22 @@
 	let items: AgendaItem[] = $state([]);
 	let calendars: AgendaCalendar[] = $state([]);
 	let weather: Weather | null = $state(null);
+	let hiddenCalendars: Set<number> = $state(new Set());
+
+	// Items with no calendar (an orphaned instance) always show - there is no
+	// legend chip that could bring them back.
+	let visibleItems = $derived(
+		items.filter((item) => !item.calendar || !hiddenCalendars.has(item.calendar.id))
+	);
+
+	function toggleCalendar(id: number) {
+		// Reassign rather than mutate: $state tracks the binding, not Set writes.
+		const next = new Set(hiddenCalendars);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		hiddenCalendars = next;
+		saveHidden(next);
+	}
 
 	async function loadAgenda() {
 		items = await fetchAgenda();
@@ -23,6 +40,11 @@
 
 	async function loadCalendars() {
 		calendars = await fetchCalendars();
+		const pruned = pruneHidden(hiddenCalendars, calendars.map((c) => c.id));
+		if (pruned.size !== hiddenCalendars.size) {
+			hiddenCalendars = pruned;
+			saveHidden(pruned);
+		}
 	}
 
 	async function loadWeather() {
@@ -30,6 +52,7 @@
 	}
 
 	onMount(() => {
+		hiddenCalendars = loadHidden();
 		loadAgenda();
 		loadCalendars();
 		loadWeather();
@@ -57,8 +80,8 @@
 		<h1>HomeDash</h1>
 		<WeatherWidget {weather} />
 	</header>
-	<CalendarLegend {calendars} />
-	<AgendaList {items} />
+	<CalendarLegend {calendars} hidden={hiddenCalendars} onToggle={toggleCalendar} />
+	<AgendaList items={visibleItems} />
 </main>
 
 <style>
