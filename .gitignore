@@ -23,6 +23,10 @@ photos/
 .env.*
 !.env.example
 
+# Claude Code worktrees hold whole git repos; `git add -A` would otherwise
+# stage one as an embedded repository.
+.claude/worktrees/
+
 # Editors / OS
 .DS_Store
 .vscode/

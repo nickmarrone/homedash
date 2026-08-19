@@ -1,9 +1,12 @@
 # HomeDash — Implementation Plan
 
-> **Status: Phases 1 and 2 are complete.** Backend (FastAPI/SQLModel/Alembic/APScheduler),
+> **Status: Phases 1, 2 and 3 are complete.** Backend (FastAPI/SQLModel/Alembic/APScheduler),
 > ICS + CalDAV + Google Calendar adapters, Open-Meteo weather, SSE, agenda/day/week/month
-> views, a backend test suite, and Docker packaging are all in place. Next up is Phase 3
-> (the wall panel).
+> views, a backend test suite, and Docker packaging are all in place, as is the Raspberry Pi
+> wall panel: `deploy/pi/` provisions the kiosk, the `devices` table carries the screen
+> schedule, and the panel is laid out for both orientations. One item is deliberately left
+> open on hardware — which mechanism actually blanks the monitor (see Phase 3). Next up is
+> Phase 4 (the screensaver).
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -241,7 +244,14 @@ render correctly. *(Done.)*
 
 ### Hardware
 
-Undecided — see Open decisions. Everything below works on a Pi 2, 3, or 4; only the display stack differs.
+**Settled: a Raspberry Pi 5 as a thin client, driving an InnoView 15.6" 1080p 10-point touch
+portable monitor** (2x USB-C, 1x HDMI). Mountable either way up, so the layout targets both
+1920x1080 and 1080x1920.
+
+This matters more than a hardware note usually would, because it invalidates most of the
+display advice written below when the Pi was undecided — see the table under "Screen sleep and
+wake". A Pi 5 runs labwc/Wayland, has no `vcgencmd display_power`, and a USB-C monitor has no
+backlight sysfs node.
 
 ### Kiosk lockdown, four layers
 
@@ -285,12 +295,22 @@ Plus `preventDefault` on `contextmenu`, and a client-side watchdog that reloads 
 
 A small Python agent on the Pi polls `GET /api/devices/{id}/screen` every 30 seconds and applies the returned state. Schedule lives in the HomeDash settings UI, not in a cron file you'll forget about. This is the only thing the `devices` table is for — filtering was settled in Phase 2 as panel-local.
 
-| Panel type | Mechanism |
-|---|---|
-| Official DSI touchscreen | `/sys/class/backlight/*/bl_power` (0 on, 1 off), `brightness` for dimming |
-| HDMI | `vcgencmd display_power 0\|1` |
-| X11 fallback | `xset dpms force off` |
-| Wayland / labwc | `wlopm --off '*'` |
+| Panel type | Mechanism | Applies here? |
+|---|---|---|
+| Official DSI touchscreen | `/sys/class/backlight/*/bl_power` (0 on, 1 off), `brightness` for dimming | **No** — that node exists only for the DSI panel |
+| HDMI | `vcgencmd display_power 0\|1` | **No** — removed on Pi 5; answers "Command not registered" |
+| X11 fallback | `xset dpms force off` | **No** — labwc is Wayland |
+| Wayland / labwc | `wlopm --off '*'`, or `wlr-randr --output X --off` | **Yes** — the only path left |
+
+The first three rows were written before the hardware was chosen and are all dead ends on a
+Pi 5 driving a USB-C monitor. `vcgencmd display_power` in particular was retired in the move
+to Wayland/labwc, which is easy to mistake for a broken install. `wlopm` is also not packaged
+in every Debian release, so `deploy/pi/setup.sh` installs whichever of it and `wlr-randr`
+exist rather than failing on the one that does not.
+
+Whether a *portable* monitor honours any of this is a separate question — some sleep, some
+show a floating "No Signal" logo, some ignore it. `screen_agent.py probe` exists to answer it
+on the actual hardware, and the agent ships in `--dry-run` until it has been.
 
 Ship the agent as a systemd unit with `Restart=always`. Same for the browser.
 
@@ -303,9 +323,30 @@ Ship the agent as a systemd unit with `Restart=always`. Same for the browser.
   view and calendar visibility are panel-local `localStorage`, settled in Phase 2
 - Write the SD card setup as a documented script in `deploy/pi/`, not as tribal knowledge
 
+### What actually landed
+
+- `devices` table, `HOMEDASH_SCREEN_SCHEDULE`, and `GET /api/devices/{id}/screen`. The schedule
+  is seeded onto the row at startup the way calendars are, so a settings UI can later `PUT`
+  the same row with no API change. All the date arithmetic is server-side, including the
+  overnight-wrap case (`on` later than `off`) — the Pi does none.
+- **A 30-second SSE `heartbeat`.** sse-starlette's own ping is an SSE *comment*, which
+  EventSource never surfaces to an `addEventListener`, so it could not serve as the liveness
+  signal a watchdog needs. The heartbeat also carries the server's date, which fixed a bug
+  this plan never anticipated: `events.updated` only fires when a sync *changes* something,
+  so on a quiet day an always-on panel kept yesterday's "Today" heading forever.
+- **Portrait as well as landscape** (see Open decisions). Driven by a CSS media query, so it
+  follows a physical rotation with nothing to configure.
+- `deploy/pi/` — `setup.sh`, the screen agent, systemd units, the Chromium enterprise policy,
+  and a README covering rotation, touch mapping, and the read-only overlay.
+
+Layer 4 of the lockdown was already done: Phase 2's touch pass shipped the `contextmenu`
+suppressor, `user-select`, `touch-action`, and 48px targets. Only the watchdog was missing.
+
 ### Done when
 
-The Pi boots straight into HomeDash, a curious eight-year-old can't get out of it, and the screen turns itself off at bedtime.
+The Pi boots straight into HomeDash, a curious eight-year-old can't get out of it, and the
+screen turns itself off at bedtime. *(Done, except that the blanking mechanism must be
+confirmed on the hardware — run `homedash-screen-agent probe` and drop `--dry-run`.)*
 
 ---
 
@@ -319,7 +360,7 @@ The Pi boots straight into HomeDash, a curious eight-year-old can't get out of i
 - Define the `PhotoSource` protocol here — `list_photos() -> list[Photo]` returning stable IDs plus local paths. Everything downstream depends on this interface, not on the folder.
 - Idle detection: no touch interaction for *N* minutes, and the screen schedule says the display should be on
 - Crossfade transitions, configurable dwell time, shuffle with no immediate repeats
-- Orientation handling: filter to landscape, or pair two portrait photos side by side. Pillarboxed portraits look bad on a wall panel.
+- Orientation handling: pair or crop whichever way the photo disagrees with the panel. Letterboxing looks bad on a wall panel either way up, and since this panel can be mounted in portrait, the mismatched orientation is not always the portrait one — see Open decision 2.
 - Tap anywhere to dismiss and return to the calendar
 
 ### Notes
@@ -388,8 +429,13 @@ Repeating chore definitions, per-member assignment, completion tracking, and a p
 
 ## Open decisions
 
-1. **Which Pi.** Pi 2 and 3 are both 1 GB and must stay thin clients. Pi 4 (4 GB) could host the container and the display on one box — simpler product, but a single point of failure, and SQLite on an SD card 24/7 will eventually kill the card. If you go Pi 4 all-in-one, boot from a USB SSD.
-2. **Panel size and resolution.** Drives the entire layout, the photo resize target, and the backlight control mechanism. Worth settling before Phase 2 styling.
+1. **Which Pi.** *(Settled — a Pi 5, kept as a thin client.)* It could have hosted the
+   container too, but keeping the split means the display can be replaced or duplicated
+   without touching the server, and it keeps 24/7 SQLite writes off the panel's SD card.
+2. **Panel size and resolution.** *(Settled — 15.6", 1920x1080, and it must work rotated, so
+   1080x1920 too.)* The photo resize target in Phase 4 is therefore both, and portrait
+   inverts that phase's orientation note: on a portrait panel it is *landscape* photos that
+   need pairing or cropping.
 3. **Auth on the web UI.** The wall panel has no login, but the phone-based admin UI probably needs one. Simplest workable answer: a single household password, LAN-only, no accounts.
 4. **Repo layout.** Monorepo with `backend/` and `frontend/` is the obvious call given the single-image build. *(Settled — this is what's in the repo.)*
 
