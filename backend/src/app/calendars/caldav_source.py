@@ -67,13 +67,13 @@ class CalDAVCalendarSource:
     def sync_state(self) -> str | None:
         return self._sync_state
 
-    def fetch(self) -> list[VEvent]:
+    def fetch(self, force: bool = False) -> list[VEvent]:
         calendar = self._calendar_factory(
             self.url, self.username, self.password, self.timeout
         )
 
         stored = self._sync_state or ""
-        if stored.startswith(TOKEN_PREFIX):
+        if not force and stored.startswith(TOKEN_PREFIX):
             token = stored[len(TOKEN_PREFIX) :]
             if self._unchanged_since(calendar, token):
                 self.changed = False
@@ -91,7 +91,7 @@ class CalDAVCalendarSource:
         else:
             new_state = DIGEST_PREFIX + _digest(vevents)
 
-        if new_state == self._sync_state and stored.startswith(DIGEST_PREFIX):
+        if not force and new_state == self._sync_state and stored.startswith(DIGEST_PREFIX):
             # Digest fallback: identical content, so skip the rebuild.
             self.changed = False
             self._vevents = vevents

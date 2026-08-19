@@ -20,12 +20,16 @@ class CalendarSource(Protocol):
     #: Whether the last `fetch()` returned different data from the time before.
     changed: bool
 
-    def fetch(self) -> list[VEvent]:
+    def fetch(self, force: bool = False) -> list[VEvent]:
         """Return the current VEVENT components for this source.
 
         If nothing has changed since the last call, implementations may
         return the same list they returned previously rather than
         re-fetching from the network, and must leave `changed` False.
+
+        `force` suppresses that short-circuit: the caller needs real data
+        because it is going to re-expand the materialization window, not
+        because it thinks anything changed.
         """
         ...
 

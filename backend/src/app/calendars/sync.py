@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from app.calendars.base import CalendarSource as CalendarSourceProtocol
 from app.calendars.caldav_source import CalDAVCalendarSource
 from app.calendars.colors import color_for_index
+from app.calendars.localtime import as_utc
 from app.calendars.ics import ICSCalendarSource
 from app.config import CalendarConfig, get_settings, source_key
 from app.models import CalendarSource, Event, EventInstance
@@ -175,6 +176,23 @@ def build_adapter(source: CalendarSource) -> CalendarSourceProtocol:
     )
 
 
+def needs_full_resync(source: CalendarSource, now: datetime) -> bool:
+    """Whether this source must be re-expanded regardless of change detection.
+
+    Change detection answers "did the calendar move?", but the materialization
+    window also moves - it rolls forward a day at a time. A calendar that
+    genuinely never changes would otherwise never be re-expanded, and the far
+    end of its window would slowly empty out: recurring occurrences stop being
+    materialized, and events that were beyond the horizon never arrive.
+
+    Once a day is ample, since the window is measured in months.
+    """
+    last = source.last_full_sync_at
+    if last is None:
+        return True
+    return as_utc(last).date() < now.date()
+
+
 def sync_source(session: Session, source: CalendarSource) -> bool:
     """Fetch, expand, and materialize one calendar source's event instances
     for the rolling sync window. Returns True if the source had changed and
@@ -187,10 +205,11 @@ def sync_source(session: Session, source: CalendarSource) -> bool:
     bugs would otherwise live.
     """
     adapter = build_adapter(source)
-    vevents = adapter.fetch()
     now = datetime.now(timezone.utc)
+    force = needs_full_resync(source, now)
+    vevents = adapter.fetch(force=force)
 
-    if not adapter.changed:
+    if not adapter.changed and not force:
         source.last_synced_at = now
         session.add(source)
         session.commit()
@@ -235,6 +254,7 @@ def sync_source(session: Session, source: CalendarSource) -> bool:
 
     source.sync_state = adapter.sync_state
     source.last_synced_at = now
+    source.last_full_sync_at = now
     session.add(source)
     session.commit()
     return True

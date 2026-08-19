@@ -33,6 +33,11 @@ class CalendarSource(SQLModel, table=True):
     member_id: int | None = Field(default=None, foreign_key="members.id")
     enabled: bool = True
     last_synced_at: datetime | None = None
+    # When instances were last rebuilt from scratch, as opposed to merely
+    # polled. The materialization window rolls forward daily, so a source that
+    # simply never changes still has to be re-expanded periodically or the far
+    # end of the window slowly empties out.
+    last_full_sync_at: datetime | None = None
     # Opaque resume token owned by whichever adapter serves this kind: an
     # HTTP ETag for ICS, a sync-token for CalDAV and Google.
     sync_state: str | None = None
