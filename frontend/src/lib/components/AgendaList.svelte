@@ -6,6 +6,13 @@
 
 	type Group = { key: string; heading: string; items: AgendaItem[] };
 
+	function todayKey(): string {
+		const now = new Date();
+		const month = String(now.getMonth() + 1).padStart(2, '0');
+		const day = String(now.getDate()).padStart(2, '0');
+		return `${now.getFullYear()}-${month}-${day}`;
+	}
+
 	let groups = $derived.by((): Group[] => {
 		const byDay = new Map<string, AgendaItem[]>();
 		for (const item of items) {
@@ -14,37 +21,44 @@
 			list.push(item);
 			byDay.set(key, list);
 		}
-		return [...byDay.entries()].map(([key, dayItems]) => ({
-			key,
-			heading: formatDayHeading(key),
-			items: dayItems
-		}));
+		// Always include today, even with no events, so the panel reads as a
+		// live calendar rather than going blank when nothing is scheduled.
+		const key = todayKey();
+		if (!byDay.has(key)) byDay.set(key, []);
+		return [...byDay.entries()]
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, dayItems]) => ({
+				key,
+				heading: formatDayHeading(key),
+				items: dayItems
+			}));
 	});
 </script>
 
 <div class="agenda">
-	{#if groups.length === 0}
-		<p class="empty">Nothing on the calendar.</p>
-	{/if}
 	{#each groups as group (group.key)}
 		<section>
 			<h2>{group.heading}</h2>
-			<ul>
-				{#each group.items as item (item.id)}
-					<li>
-						<span
-							class="dot"
-							style:background-color={item.member?.color ?? '#888'}
-							aria-hidden="true"
-						></span>
-						<span class="time">{item.all_day ? 'All day' : formatTime(item.starts_at)}</span>
-						<span class="title">{item.title}</span>
-						{#if item.location}
-							<span class="location">{item.location}</span>
-						{/if}
-					</li>
-				{/each}
-			</ul>
+			{#if group.items.length === 0}
+				<p class="empty">Nothing scheduled.</p>
+			{:else}
+				<ul>
+					{#each group.items as item (item.id)}
+						<li>
+							<span
+								class="dot"
+								style:background-color={item.member?.color ?? '#888'}
+								aria-hidden="true"
+							></span>
+							<span class="time">{item.all_day ? 'All day' : formatTime(item.starts_at)}</span>
+							<span class="title">{item.title}</span>
+							{#if item.location}
+								<span class="location">{item.location}</span>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</section>
 	{/each}
 </div>
