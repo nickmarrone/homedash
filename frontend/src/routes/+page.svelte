@@ -10,8 +10,10 @@
 		type AgendaItem,
 		type CalendarView,
 		type CalendarViewName,
+		type Heartbeat,
 		type Weather
 	} from '$lib/api';
+	import { startWatchdog } from '$lib/watchdog';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
 	import AgendaList from '$lib/components/AgendaList.svelte';
@@ -33,6 +35,10 @@
 	// Null means "wherever today is" - the backend resolves it, so no date
 	// arithmetic happens here.
 	let anchor = $state<string | null>(null);
+
+	// The server's date, from the heartbeat. The panel must never read its own
+	// clock for this - see format.ts for the same reasoning about times.
+	let serverToday: string | null = null;
 
 	let visibleItems = $derived(items.filter((item) => isVisible(item, hiddenCalendars)));
 
@@ -97,6 +103,28 @@
 		else loadGrid();
 	}
 
+	function reloadEverything() {
+		loadEvents();
+		loadCalendars();
+		loadWeather();
+	}
+
+	function onHeartbeat(heartbeat: Heartbeat) {
+		if (serverToday === heartbeat.today) return;
+		const rolledOver = serverToday !== null;
+		serverToday = heartbeat.today;
+		// A day boundary changes which cell is outlined and which heading reads
+		// "Today", and nothing else would prompt it: events.updated only fires
+		// when a sync actually changes something, so a quiet day would leave an
+		// always-on panel showing yesterday indefinitely. Snap back to today
+		// rather than holding whatever period was last navigated to - nobody is
+		// at the wall at midnight, and the panel should be showing now.
+		if (rolledOver) {
+			anchor = null;
+			reloadEverything();
+		}
+	}
+
 	onMount(() => {
 		hiddenCalendars = loadHidden();
 		view = loadView();
@@ -104,17 +132,29 @@
 		loadCalendars();
 		loadWeather();
 
-		const unsubscribe = subscribeToUpdates((eventType) => {
-			// Calendars are reloaded too: a config change adds or removes a
-			// source, and the legend must follow without a page reload.
-			if (eventType === 'events.updated') {
-				loadEvents();
-				loadCalendars();
+		const watchdog = startWatchdog();
+
+		const unsubscribe = subscribeToUpdates({
+			onMessage: () => watchdog.notify(),
+			onHeartbeat,
+			// The stream dropped and came back, so anything could have changed
+			// while it was gone.
+			onReconnect: reloadEverything,
+			onEvent: (eventType) => {
+				// Calendars are reloaded too: a config change adds or removes a
+				// source, and the legend must follow without a page reload.
+				if (eventType === 'events.updated') {
+					loadEvents();
+					loadCalendars();
+				}
+				if (eventType === 'weather.updated') loadWeather();
 			}
-			if (eventType === 'weather.updated') loadWeather();
 		});
 
-		return unsubscribe;
+		return () => {
+			watchdog.stop();
+			unsubscribe();
+		};
 	});
 </script>
 

@@ -124,13 +124,54 @@ export async function fetchWeather(): Promise<Weather> {
 	return response.json();
 }
 
-/** Subscribes to the backend's SSE stream and calls `onEvent` with the
- * event name ("events.updated" | "weather.updated") whenever one arrives.
- * Returns an unsubscribe function. */
-export function subscribeToUpdates(onEvent: (eventType: string) => void): () => void {
+export interface Heartbeat {
+	/** The server's current date in the home timezone. The panel must not read
+	 * its own clock to decide the day has rolled over - see format.ts. */
+	today: string;
+	now: string;
+}
+
+export interface UpdateStreamHandlers {
+	/** An "events.updated" or "weather.updated" name. */
+	onEvent: (eventType: string) => void;
+	onHeartbeat?: (heartbeat: Heartbeat) => void;
+	/** Fired when the stream reopens after dropping. EventSource retries on its
+	 * own, but nothing re-syncs the DOM that went stale meanwhile, so the page
+	 * needs to refetch here or it silently serves whatever it had before. */
+	onReconnect?: () => void;
+	/** Called on every message of any kind, for the staleness watchdog. */
+	onMessage?: () => void;
+}
+
+/** Subscribes to the backend's SSE stream. Returns an unsubscribe function. */
+export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 	const source = new EventSource('/api/events/stream');
-	const forward = (event: MessageEvent) => onEvent(event.type);
+	// The first `open` is the initial connection, not a reconnection; only the
+	// ones after a drop should trigger a refetch.
+	let hasConnected = false;
+
+	const forward = (event: MessageEvent) => {
+		handlers.onMessage?.();
+		handlers.onEvent(event.type);
+	};
 	source.addEventListener('events.updated', forward);
 	source.addEventListener('weather.updated', forward);
+
+	source.addEventListener('heartbeat', (event: MessageEvent) => {
+		handlers.onMessage?.();
+		try {
+			handlers.onHeartbeat?.(JSON.parse(event.data) as Heartbeat);
+		} catch {
+			// A malformed heartbeat still proves the stream is alive, which is
+			// most of its job. Don't let it take the page down.
+		}
+	});
+
+	source.addEventListener('open', () => {
+		handlers.onMessage?.();
+		if (hasConnected) handlers.onReconnect?.();
+		hasConnected = true;
+	});
+
 	return () => source.close();
 }

@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session, select
@@ -22,6 +23,13 @@ scheduler = BackgroundScheduler(timezone="UTC")
 # own, much faster job.
 SLOW_KINDS = ("ics",)
 FAST_KINDS = ("caldav", "google")
+
+# The panel is a browser tab that stays open for months, so it needs a
+# positive signal that the stream is still alive. sse-starlette's own ping
+# cannot serve: it is an SSE *comment*, which EventSource never surfaces to
+# an addEventListener, so the page cannot tell a healthy quiet stream from a
+# wedged one. This is a real named event for that reason.
+HEARTBEAT_SECONDS = 30
 
 
 def sync_kinds(kinds: tuple[str, ...]) -> None:
@@ -57,6 +65,20 @@ def run_fast_sync() -> None:
     sync_kinds(FAST_KINDS)
 
 
+def run_heartbeat() -> None:
+    """Tell the panel the stream is alive, and what day it is.
+
+    Carrying the date is what keeps an always-on panel from getting stuck on
+    yesterday. events.updated only fires when a sync actually changes
+    something, so on a quiet day nothing else would ever prompt a re-render and
+    the "Today" heading would silently rot. Sending the server's date rather
+    than letting the browser read its own clock keeps the panel's OS timezone
+    out of it, the same way format.ts and /api/calendar already do.
+    """
+    now = datetime.now(ZoneInfo(settings.home_timezone))
+    broadcaster.publish("heartbeat", {"today": now.date().isoformat(), "now": now.isoformat()})
+
+
 def run_weather_refresh() -> None:
     try:
         if refresh_weather():
@@ -78,6 +100,13 @@ def start_scheduler() -> None:
         "interval",
         minutes=settings.fast_poll_interval_minutes,
         id="fast_sync",
+        next_run_time=datetime.now(),
+    )
+    scheduler.add_job(
+        run_heartbeat,
+        "interval",
+        seconds=HEARTBEAT_SECONDS,
+        id="heartbeat",
         next_run_time=datetime.now(),
     )
     scheduler.add_job(
