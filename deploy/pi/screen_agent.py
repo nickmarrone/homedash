@@ -108,6 +108,14 @@ def find_mechanism(name: str | None) -> Mechanism | None:
     if name and name != "auto":
         for mechanism in MECHANISMS:
             if mechanism.name == name:
+                if not mechanism.available():
+                    # Say so now rather than letting every poll fail at exec
+                    # time with an errno the journal makes look like a bug.
+                    logger.warning(
+                        "Mechanism %r is named but %s is not installed",
+                        name,
+                        mechanism.tool,
+                    )
                 return mechanism
         logger.error(
             "Unknown mechanism %r. Known: %s",
