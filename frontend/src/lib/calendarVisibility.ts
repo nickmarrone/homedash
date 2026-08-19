@@ -1,7 +1,7 @@
-// Which calendars the user has hidden, persisted per *device* rather than per
-// user - the wall panel has no login, and the choice has to survive the reboots
-// and browser restarts a kitchen display goes through. Phase 2 moves this onto
-// the `devices` row; localStorage is the same scope in the meantime.
+// Which calendars have been hidden on this panel. There is no login and only
+// one shared screen, so this is a property of the panel rather than of a
+// person, and it has to survive the reboots and browser restarts a kitchen
+// display goes through.
 
 const STORAGE_KEY = 'homedash:hidden-calendars';
 
@@ -31,4 +31,13 @@ export function saveHidden(hidden: Set<number>): void {
 export function pruneHidden(hidden: Set<number>, knownIds: number[]): Set<number> {
 	const known = new Set(knownIds);
 	return new Set([...hidden].filter((id) => known.has(id)));
+}
+
+/** Whether an item should be shown, given the hidden set.
+ *
+ * Items with no calendar - an orphaned instance whose source has gone - always
+ * show: there is no legend chip that could ever bring them back. Shared by the
+ * agenda and every grid view so one filter cannot disagree with another. */
+export function isVisible(item: { calendar: { id: number } | null }, hidden: Set<number>): boolean {
+	return !item.calendar || !hidden.has(item.calendar.id);
 }

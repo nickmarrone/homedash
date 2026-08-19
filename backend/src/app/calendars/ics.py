@@ -14,8 +14,11 @@ class ICSCalendarSource:
         self.changed = False
         self._vevents: list[VEvent] = []
 
-    def fetch(self) -> list[VEvent]:
-        headers = {"If-None-Match": self.etag} if self.etag else {}
+    def fetch(self, force: bool = False) -> list[VEvent]:
+        # A forced fetch skips the conditional GET: the caller wants the real
+        # body because it is about to re-expand the window, and a 304 would
+        # hand it back an empty list.
+        headers = {"If-None-Match": self.etag} if self.etag and not force else {}
         response = httpx.get(self.url, headers=headers, timeout=self.timeout, follow_redirects=True)
 
         if response.status_code == 304:
@@ -28,3 +31,8 @@ class ICSCalendarSource:
         self.etag = response.headers.get("ETag")
         self.changed = True
         return self._vevents
+
+    @property
+    def sync_state(self) -> str | None:
+        """The feed's ETag - what a conditional GET resumes from."""
+        return self.etag
