@@ -8,21 +8,20 @@ at each call site where the two could quietly drift apart.
 from zoneinfo import ZoneInfo
 
 from app.calendars.localtime import to_local
-from app.models import CalendarSource, EventInstance, Member
+from app.models import CalendarSource, EventInstance
 
 
 def serialize_instance(
     instance: EventInstance,
-    member: Member | None,
     source: CalendarSource | None,
     tz: ZoneInfo,
     **extra: object,
 ) -> dict:
     """One agenda/grid item, with times already in the home timezone.
 
-    `member` and `source` are optional because both joins are outer: an
-    instance whose event or source has gone missing should still render,
-    uncolored, rather than silently vanish from the panel.
+    `source` is optional because the join is outer: an instance whose event or
+    source has gone missing should still render, uncolored, rather than
+    silently vanish from the panel.
     """
     return {
         "id": instance.id,
@@ -31,9 +30,6 @@ def serialize_instance(
         "all_day": instance.all_day,
         "starts_at": to_local(instance.starts_at, tz, all_day=instance.all_day).isoformat(),
         "ends_at": to_local(instance.ends_at, tz, all_day=instance.all_day).isoformat(),
-        "member": (
-            {"id": member.id, "name": member.name, "color": member.color} if member else None
-        ),
         "calendar": (
             {"id": source.id, "name": source.name, "color": source.color} if source else None
         ),

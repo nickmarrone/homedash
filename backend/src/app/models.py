@@ -6,6 +6,17 @@ from app.calendars.colors import FALLBACK_COLOR
 
 
 class Member(SQLModel, table=True):
+    """Unused. Phase 2 concluded that with one calendar per person,
+    `CalendarSource` *is* the person, so nothing reads or writes this table and
+    no API exposes it.
+
+    The table and the two `member_id` columns are kept rather than dropped
+    because removing `calendar_sources.member_id` on SQLite means a
+    batch_alter_table rebuild of a table that `events.source_id` references -
+    real risk to a family's data, in exchange for tidiness. See "Members, and
+    event editing" in CLAUDE.md for what would bring this back.
+    """
+
     __tablename__ = "members"
 
     id: int | None = Field(default=None, primary_key=True)

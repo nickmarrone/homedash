@@ -93,7 +93,18 @@ def main() -> int:
     state = secrets.token_urlsafe(16)
     url = authorization_url(args.client_id, redirect_uri, verifier, state)
 
-    print(f"Add this exact redirect URI to the OAuth client if it is not there already:\n  {redirect_uri}\n")
+    # A Desktop app client accepts any loopback port without registration,
+    # which is the whole reason this can grab a free one. Saying "register
+    # this URI" unconditionally sends people looking for a setting that does
+    # not exist for their client type, so it is mentioned only as the fix for
+    # the specific failure it causes.
+    print(f"Redirecting to: {redirect_uri}")
+    print(
+        "  If Google rejects this with redirect_uri_mismatch, the client is a\n"
+        "  Web application rather than a Desktop app. Either recreate it as a\n"
+        f"  Desktop app, or add {redirect_uri} to its authorized redirect URIs\n"
+        "  and re-run with --port {port} so it stays the same.\n".format(port=port)
+    )
     print(f"Open this URL to authorize:\n  {url}\n")
     if not args.no_browser:
         webbrowser.open(url)

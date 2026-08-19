@@ -226,11 +226,14 @@ calendar's `kind` is treated as a replacement, not a rename — its old events a
 
 ```bash
 cd backend
-uv run python diagnose_calendars.py
+uv run homedash-inspect-calendars --state --probe
 ```
 
-It prints the configured list, each source's row state (event counts, last sync, stored sync
-token), and does a live fetch of every ICS feed.
+`--state` prints what each calendar has actually stored — event and instance counts, when it
+last synced and last fully re-expanded, and the resume token it is holding — and flags the two
+states that explain most empty calendars: every instance being in the past, and a source
+holding a resume token while storing no events, which makes change detection keep answering
+"nothing changed". `--probe` additionally fetches each ICS feed to confirm it is reachable.
 
 **Changes take hours to appear.** That calendar is on `ics`. Run
 `uv run homedash-inspect-calendars` to see whether a faster kind is available for its provider.

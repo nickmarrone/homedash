@@ -65,7 +65,7 @@ def all_day(**kwargs) -> EventInstance:
 @pytest.mark.parametrize("host_tz", ["UTC", "America/Los_Angeles", "Asia/Tokyo"])
 def test_timed_event_ignores_the_host_clock(host_timezone, host_tz):
     host_timezone(host_tz)
-    payload = serialize_instance(timed(), None, None, NEW_YORK)
+    payload = serialize_instance(timed(), None, NEW_YORK)
     # 16:00 UTC is noon in New York, whatever the panel's OS thinks.
     assert payload["starts_at"] == "2026-08-15T12:00:00-04:00"
     assert payload["ends_at"] == "2026-08-15T13:00:00-04:00"
@@ -73,34 +73,32 @@ def test_timed_event_ignores_the_host_clock(host_timezone, host_tz):
 
 def test_all_day_event_keeps_its_own_date_behind_utc(host_timezone):
     host_timezone("UTC")
-    payload = serialize_instance(all_day(), None, None, NEW_YORK)
+    payload = serialize_instance(all_day(), None, NEW_YORK)
     # Converting the UTC-midnight placeholder would report the 14th.
     assert payload["starts_at"].startswith("2026-08-15")
 
 
 def test_all_day_event_keeps_its_own_date_ahead_of_utc(host_timezone):
     host_timezone("UTC")
-    payload = serialize_instance(all_day(), None, None, TOKYO)
+    payload = serialize_instance(all_day(), None, TOKYO)
     assert payload["starts_at"].startswith("2026-08-15")
 
 
 def test_all_day_dates_survive_a_shifted_host_clock(host_timezone):
     host_timezone("America/Los_Angeles")
-    payload = serialize_instance(all_day(), None, None, NEW_YORK)
+    payload = serialize_instance(all_day(), None, NEW_YORK)
     assert payload["starts_at"].startswith("2026-08-15")
 
 
 def test_calendar_colour_is_attached(host_timezone):
     host_timezone("UTC")
     source = CalendarSource(id=7, kind="ics", name="Family", color="#2563eb", url="x")
-    payload = serialize_instance(timed(), None, source, NEW_YORK)
+    payload = serialize_instance(timed(), source, NEW_YORK)
     assert payload["calendar"] == {"id": 7, "name": "Family", "color": "#2563eb"}
-    # Phase 2 dropped members; the field stays for wire compatibility.
-    assert payload["member"] is None
 
 
 def test_missing_source_still_renders(host_timezone):
     host_timezone("UTC")
-    payload = serialize_instance(timed(), None, None, NEW_YORK)
+    payload = serialize_instance(timed(), None, NEW_YORK)
     assert payload["calendar"] is None
     assert payload["title"] == "Dentist"

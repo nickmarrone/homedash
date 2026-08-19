@@ -1,9 +1,3 @@
-export interface AgendaMember {
-	id: number;
-	name: string;
-	color: string;
-}
-
 export interface AgendaCalendar {
 	id: number;
 	name: string;
@@ -17,7 +11,6 @@ export interface AgendaItem {
 	all_day: boolean;
 	starts_at: string;
 	ends_at: string;
-	member: AgendaMember | null;
 	calendar: AgendaCalendar | null;
 }
 

@@ -20,7 +20,7 @@ from app.calendars.grid import (
 )
 from app.config import get_settings
 from app.db import get_session
-from app.models import CalendarSource, Event, EventInstance, Member
+from app.models import CalendarSource, Event, EventInstance
 from app.sse import broadcaster
 from app.weather.client import get_cached_weather
 
@@ -50,8 +50,7 @@ def get_agenda(session: SessionDep) -> list[dict]:
     today_start_floating = datetime(today_local.year, today_local.month, today_local.day)
 
     rows = session.exec(
-        select(EventInstance, Member, CalendarSource)
-        .join(Member, EventInstance.member_id == Member.id, isouter=True)
+        select(EventInstance, CalendarSource)
         # Outer: an instance whose event or source has gone missing should
         # still render, uncolored, rather than silently vanish from the panel.
         .join(Event, EventInstance.event_id == Event.id, isouter=True)
@@ -67,7 +66,7 @@ def get_agenda(session: SessionDep) -> list[dict]:
     ).all()
 
     return [
-        serialize_instance(instance, member, source, tz) for instance, member, source in rows
+        serialize_instance(instance, source, tz) for instance, source in rows
     ]
 
 
@@ -103,14 +102,14 @@ def get_calendar(
     rows = _instances_overlapping(session, first, last, tz)
     items = [
         GridItem(
-            payload=serialize_instance(instance, member, source, tz),
+            payload=serialize_instance(instance, source, tz),
             dates=local_dates_spanned(
                 instance.starts_at, instance.ends_at, instance.all_day, tz
             ),
             all_day=instance.all_day,
             starts_at=instance.starts_at,
         )
-        for instance, member, source in rows
+        for instance, source in rows
     ]
 
     return {
@@ -157,8 +156,7 @@ def _instances_overlapping(session: Session, first: date, last: date, tz: ZoneIn
         EventInstance.ends_at >= range_start_floating,
     )
     return session.exec(
-        select(EventInstance, Member, CalendarSource)
-        .join(Member, EventInstance.member_id == Member.id, isouter=True)
+        select(EventInstance, CalendarSource)
         .join(Event, EventInstance.event_id == Event.id, isouter=True)
         .join(CalendarSource, Event.source_id == CalendarSource.id, isouter=True)
         .where(or_(timed, floating))
