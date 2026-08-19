@@ -8,6 +8,7 @@ from icalendar.cal import Event as VEvent
 from sqlmodel import Session, select
 
 from app.calendars.base import CalendarSource as CalendarSourceProtocol
+from app.calendars.caldav_source import CalDAVCalendarSource
 from app.calendars.colors import color_for_index
 from app.calendars.ics import ICSCalendarSource
 from app.config import CalendarConfig, get_settings, source_key
@@ -121,10 +122,54 @@ def _occurrence_bounds(occurrence: VEvent) -> tuple[datetime, datetime, bool]:
     return starts_at, ends_at, True
 
 
+def sync_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """The rolling range of time the panel materializes instances for."""
+    now = now or datetime.now(timezone.utc)
+    return (
+        now - timedelta(days=settings.sync_window_past_days),
+        now + timedelta(days=settings.sync_window_future_days),
+    )
+
+
+def _credentials(source: CalendarSource) -> dict:
+    """The credential blob a source's row refers to."""
+    if not source.credentials_ref:
+        raise ValueError(
+            f"calendar {source.name!r} is kind {source.kind!r} but has no credentials "
+            "configured; give it a \"credentials\" key naming an entry in "
+            "HOMEDASH_CALENDAR_CREDENTIALS"
+        )
+    blob = settings.calendar_credentials.get(source.credentials_ref)
+    if blob is None:
+        raise ValueError(
+            f"calendar {source.name!r} references credentials "
+            f"{source.credentials_ref!r}, which is not defined in "
+            "HOMEDASH_CALENDAR_CREDENTIALS"
+        )
+    return blob
+
+
 def build_adapter(source: CalendarSource) -> CalendarSourceProtocol:
     """The adapter that serves one source's kind, resumed from its sync state."""
     if source.kind == "ics":
         return ICSCalendarSource(url=source.url, etag=source.sync_state)
+    if source.kind == "caldav":
+        blob = _credentials(source)
+        missing = [key for key in ("username", "password") if not blob.get(key)]
+        if missing:
+            raise ValueError(
+                f"credentials {source.credentials_ref!r} for calendar {source.name!r} "
+                f"is missing {', '.join(missing)}"
+            )
+        window_start, window_end = sync_window()
+        return CalDAVCalendarSource(
+            url=source.url,
+            username=blob["username"],
+            password=blob["password"],
+            window_start=window_start,
+            window_end=window_end,
+            sync_state=source.sync_state,
+        )
     raise ValueError(
         f"calendar source {source.id} has unsupported kind {source.kind!r}"
     )
@@ -151,8 +196,7 @@ def sync_source(session: Session, source: CalendarSource) -> bool:
         session.commit()
         return False
 
-    window_start = now - timedelta(days=settings.sync_window_past_days)
-    window_end = now + timedelta(days=settings.sync_window_future_days)
+    window_start, window_end = sync_window(now)
     calendar = _vevents_to_calendar(vevents)
     occurrences = recurring_ical_events.of(calendar).between(window_start, window_end)
 

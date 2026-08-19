@@ -238,3 +238,46 @@ class TestMixedKinds:
         rows = sources(session)
         assert [r.kind for r in rows] == ["caldav"]
         assert session.exec(select(Event)).all() == []
+
+
+class TestAdapterDispatch:
+    """A misconfigured credential should say what is wrong, not fail deep
+    inside an HTTP client."""
+
+    def _source(self, **kwargs) -> CalendarSource:
+        defaults = dict(
+            id=1, kind="caldav", name="Nick", url="https://caldav.example/dav/x"
+        )
+        return CalendarSource(**{**defaults, **kwargs})
+
+    def _with_credentials(self, monkeypatch, blob):
+        monkeypatch.setattr(
+            sync_module,
+            "settings",
+            Settings(_env_file=None, calendar_credentials=blob),
+        )
+
+    def test_ics_needs_no_credentials(self):
+        adapter = sync_module.build_adapter(
+            self._source(kind="ics", url="https://example.com/a.ics", sync_state="etag-1")
+        )
+        assert adapter.sync_state == "etag-1"
+
+    def test_missing_credentials_key_is_named(self, monkeypatch):
+        self._with_credentials(monkeypatch, {})
+        with pytest.raises(ValueError, match="no credentials configured"):
+            sync_module.build_adapter(self._source())
+
+    def test_unknown_credentials_key_is_named(self, monkeypatch):
+        self._with_credentials(monkeypatch, {"other": {"username": "u", "password": "p"}})
+        with pytest.raises(ValueError, match="'fm'.*not defined"):
+            sync_module.build_adapter(self._source(credentials_ref="fm"))
+
+    def test_incomplete_credentials_say_which_field_is_missing(self, monkeypatch):
+        self._with_credentials(monkeypatch, {"fm": {"username": "nick"}})
+        with pytest.raises(ValueError, match="missing password"):
+            sync_module.build_adapter(self._source(credentials_ref="fm"))
+
+    def test_unknown_kind_is_rejected(self):
+        with pytest.raises(ValueError, match="unsupported kind"):
+            sync_module.build_adapter(self._source(kind="google"))
