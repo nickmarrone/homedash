@@ -1,8 +1,9 @@
 # HomeDash — Implementation Plan
 
-> **Status: Phase 1 (Foundation) is complete.** Backend (FastAPI/SQLModel/Alembic/APScheduler),
-> ICS + Open-Meteo adapters, SSE, the SvelteKit agenda view, and Docker packaging are all in
-> place and verified end-to-end. Next up is Phase 2 (Family and views).
+> **Status: Phases 1 and 2 are complete.** Backend (FastAPI/SQLModel/Alembic/APScheduler),
+> ICS + CalDAV + Google Calendar adapters, Open-Meteo weather, SSE, agenda/day/week/month
+> views, a backend test suite, and Docker packaging are all in place. Next up is Phase 3
+> (the wall panel).
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -104,7 +105,10 @@ You can point a laptop browser at the container and see this week's real appoint
   HTTP/ETag-aware ICS implementation; `app/calendars/sync.py` does fetch → expand (via
   `recurring_ical_events`) → materialize into `event_instances`, replacing that source's rows
   each sync (simple and correct at this scale).
-- **Multiple calendars, each with its own color.** `HOMEDASH_ICS_CALENDARS` is a JSON list of
+- **Multiple calendars, each with its own color.** (Phase 2 renamed this variable to
+  `HOMEDASH_CALENDARS` and gave entries a `kind`; the old name still works as an alias. The
+  colour and reconciliation behaviour described here is unchanged.) `HOMEDASH_ICS_CALENDARS`
+  is a JSON list of
   `{"name", "url"}` objects (parsed by pydantic-settings into `config.CalendarConfig`); it
   replaced the old single-valued `HOMEDASH_ICS_URL`. `seed_ics_calendars_from_settings()` in
   `app/calendars/sync.py` reconciles that list into `calendar_sources` on every startup: rows are
@@ -124,7 +128,7 @@ You can point a laptop browser at the container and see this week's real appoint
   that calendar's events, persisted in `localStorage` via `frontend/src/lib/calendarVisibility.ts`.
   The agenda API is unchanged and still returns everything - Phase 2 moves this onto the `devices`
   row, which is the same per-device scope, so no API contract has to change to get there.
-- `app/scheduler.py` runs the ICS sync and weather refresh on `APScheduler` intervals
+- `app/scheduler.py` runs calendar syncs and the weather refresh on `APScheduler` intervals
   (`HOMEDASH_ICS_POLL_INTERVAL_MINUTES`, `HOMEDASH_WEATHER_CACHE_MINUTES`) and publishes
   `events.updated` / `weather.updated` over `app/sse.py`'s broadcaster.
 - Weather is fetched proactively (on startup + on schedule) into an in-process cache;
@@ -172,30 +176,64 @@ You can point a laptop browser at the container and see this week's real appoint
 
 ---
 
-## Phase 2 — Family and views
+## Phase 2 — Fast sync and views
 
-**Goal:** the app is genuinely usable as a family calendar.
+**Goal:** the panel is current within a minute, and readable as a day, week, or month.
+
+### What changed from the original plan
+
+This phase was written around three assumptions that turned out to be wrong. They are
+recorded here because they still shape Phases 3 and 4.
+
+1. **One shared panel, not one per person.** Everyone looks at the same screen in the
+   kitchen. Per-device filtering therefore collapses into "this panel's preference", which
+   `frontend/src/lib/calendarVisibility.ts` already does in `localStorage`. No `devices` row
+   is needed for filtering — that table's remaining job is Phase 3's screen schedule.
+2. **No event editing.** Parents edit on their phones and the change syncs down. HomeDash is
+   read-only end to end, which is also why the Google adapter asks for `calendar.readonly`.
+3. **No members.** With one calendar per person, `calendar_sources` *is* the person. Phase 1's
+   per-calendar colors, legend, and tap-to-hide already delivered the family-filtering
+   deliverable. The `members` table stays in the schema, unused; `EventInstance.member_id`
+   stays null.
+
+A fourth problem surfaced during planning and became the headline: **ICS is too slow.**
+Google regenerates a private `.ics` feed on its own schedule, often hours behind, so the file
+we fetch is already stale — polling harder just re-fetches the same stale bytes. That is what
+pulled CalDAV forward. It was originally going to be deferred *because* dropping the write
+path removed most of its value; latency alone justified it.
 
 ### Deliverables
 
-- **Members** — CRUD for name, color, avatar. Ship a set of built-in avatars; allow image upload later.
-- **Source-to-member mapping** — a calendar source belongs to a member; support a shared "household" calendar with no member.
-- **Member filtering** — select which members are visible. Persist per *device*, not per user, since there's no login on the wall panel. Store on the `devices` row keyed by a device ID so it survives reboots.
-- **Day / week / month views** — month is the most layout-intensive; precompute the grid server-side rather than doing it in JS on every navigation.
-- **CalDAV adapter** — real bidirectional sync with etag/sync-token deltas via the `caldav` library. Apple, Fastmail, and Nextcloud work with app-specific passwords; Google requires an OAuth2 consent flow.
-- Basic event creation and editing (for CalDAV sources only; ICS is read-only)
-- Touch-friendly styling pass — large tap targets, high contrast, readable from across a room
+- **Calendar kinds.** `HOMEDASH_CALENDARS` replaces `HOMEDASH_ICS_CALENDARS` (kept working as
+  a deprecated alias). Each entry has a `kind`: `ics`, `caldav`, or `google`.
+- **CalDAV adapter** — Apple, Fastmail, Nextcloud, with app-specific passwords.
+- **Google Calendar adapter** — `events.list` with `syncToken`, behind an OAuth2 refresh token.
+- **Two poll cadences** — ICS keeps 15 minutes, since faster changes nothing; CalDAV and Google
+  poll every minute.
+- **Day / week / month views**, precomputed server-side, plus the existing agenda.
+- **A backend test suite** — there were none before this phase.
+- Touch-friendly styling pass — large tap targets, no long-press or drag-select escapes
 
 ### Notes
 
-- The permission model matters here even though the kid-lock UI is post-v1. Decide now whether "edit" is a device-level capability or a per-member one; retrofitting it is painful.
-- Recurring event edits are the classic trap: "this occurrence", "this and future", "all occurrences". Support only "this occurrence" in v1 and say so in the UI.
+- **Detect cheaply, rebuild fully.** Sync tokens are used only to answer "did anything
+  change?". When something did, the existing wholesale rebuild runs. True incremental sync —
+  upserting changed events, tombstoning cancelled ones — would mean rewriting the
+  materialization path, which is where sync bugs live, to save a rebuild of a few hundred rows.
+- **Every adapter returns VEVENT masters,** never expanded occurrences, so all three kinds flow
+  through the one `recurring_ical_events` expansion. This is why Google is called with
+  `singleEvents=false`.
+- **Google's OAuth rules move.** The out-of-band flow is gone and non-loopback plaintext
+  redirect URIs are rejected, so authorization is a one-time CLI on a machine with a browser,
+  not something the panel does. Check the current docs before changing that flow.
+- A consent screen left in **Testing** mode expires refresh tokens after seven days, which
+  presents as the panel breaking a week after it started working. Publish it.
 
 ### Done when
 
-Each family member has a color, the kids' tablet view shows only their items, and all four views render correctly.
+An event edited on a phone appears on the panel within about a minute, and all four views
+render correctly. *(Done.)*
 
----
 
 ## Phase 3 — The wall panel
 
@@ -245,7 +283,7 @@ Plus `preventDefault` on `contextmenu`, and a client-side watchdog that reloads 
 
 ### Screen sleep and wake
 
-A small Python agent on the Pi polls `GET /api/devices/{id}/screen` every 30 seconds and applies the returned state. Schedule lives in the HomeDash settings UI, not in a cron file you'll forget about.
+A small Python agent on the Pi polls `GET /api/devices/{id}/screen` every 30 seconds and applies the returned state. Schedule lives in the HomeDash settings UI, not in a cron file you'll forget about. This is the only thing the `devices` table is for — filtering was settled in Phase 2 as panel-local.
 
 | Panel type | Mechanism |
 |---|---|
@@ -260,7 +298,9 @@ Ship the agent as a systemd unit with `Restart=always`. Same for the browser.
 
 - Don't attach a keyboard — removes most of the attack surface for free
 - Enable the read-only overlay filesystem via `raspi-config` — protects the SD card from power-yank corruption, and any mess resets on reboot
-- Device registration flow: first boot shows a pairing code, you name the device from the settings UI
+- Device registration: there is exactly one panel, so this is a configured device rather than a
+  pairing flow. The `devices` row exists for the screen schedule and last-seen, not for filters —
+  view and calendar visibility are panel-local `localStorage`, settled in Phase 2
 - Write the SD card setup as a documented script in `deploy/pi/`, not as tribal knowledge
 
 ### Done when
@@ -311,6 +351,20 @@ You already run Immich, so this is the intended second `PhotoSource` implementat
 - Optional polish: Immich emits WebSocket events when assets are uploaded or albums are modified. Subscribe and a photo taken at dinner appears on the kitchen screen minutes later. A 15-minute poll is fine to start.
 - Deployment: put HomeDash on the same Docker network as Immich and use the internal service hostname. No TLS hop, no external exposure.
 
+### Members, and event editing
+
+Both were dropped from Phase 2 rather than deferred for scheduling reasons — see that phase's
+notes for why. They come back only if the shape of the household changes:
+
+- **Members** would earn their place if one person needed several calendars grouped under a
+  single name and color, or if avatars turned out to help kids find their own events faster
+  than a legend does. `members` and `EventInstance.member_id` are already in the schema.
+- **Event editing** would mean a write path, and with it the CalDAV/Google write scopes,
+  a permission model, and the recurring-edit trap ("this occurrence" / "this and future" /
+  "all"). Currently unnecessary: phones already edit these calendars well.
+- **Multiple panels with independent filters** would revive the per-device work Phase 2
+  removed. Filters would move from `localStorage` onto a `devices` row.
+
 ### Kid lock
 
 App-level, distinct from the device lockdown in Phase 3. PIN gate on editing, settings, and member filter changes. Design the permission model in Phase 2 even if the UI lands here.
@@ -327,7 +381,6 @@ Repeating chore definitions, per-member assignment, completion tracking, and a p
 
 - Photo source: Google Drive folder (Google Photos is not viable — the Library API scopes for reading a user's own albums were removed in March 2025)
 - Photo source: iCloud shared album via the undocumented `sharedstreams` endpoint
-- Multiple panels with independent filters
 - Touch-to-wake and PIR motion sensor
 - Home Assistant integration
 
