@@ -132,4 +132,23 @@
 		opacity: 0.6;
 		padding-left: 0.3rem;
 	}
+
+	/* Portrait keeps all seven columns - a month grid is seven columns by
+	   definition - but they are ~150px wide, so the cells give back the height
+	   they were using to spread out and the chips lose their time prefix
+	   rather than ellipsing every title away. */
+	@media (orientation: portrait) {
+		.cell {
+			min-height: 4.5rem;
+		}
+
+		.chip {
+			font-size: 0.75rem;
+			padding: 0.1rem 0.2rem;
+		}
+
+		.chiptime {
+			display: none;
+		}
+	}
 </style>

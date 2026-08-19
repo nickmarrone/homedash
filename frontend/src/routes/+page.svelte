@@ -13,6 +13,7 @@
 		type Heartbeat,
 		type Weather
 	} from '$lib/api';
+	import { createOrientation } from '$lib/orientation.svelte';
 	import { startWatchdog } from '$lib/watchdog';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
@@ -39,6 +40,11 @@
 	// The server's date, from the heartbeat. The panel must never read its own
 	// clock for this - see format.ts for the same reasoning about times.
 	let serverToday: string | null = null;
+
+	// Rotating the panel changes what needs fetching, not just how it looks:
+	// portrait shows the agenda under the calendar, so it needs both.
+	const orientation = createOrientation(() => loadEvents());
+	let isPortrait = $derived(orientation.isPortrait);
 
 	let visibleItems = $derived(items.filter((item) => isVisible(item, hiddenCalendars)));
 
@@ -99,8 +105,15 @@
 	}
 
 	function loadEvents() {
+		// In portrait both are on screen at once, so both are fetched. The two
+		// endpoints answer different questions - the grid covers the period
+		// being navigated, the agenda is always "what is coming up next" - so
+		// one cannot be derived from the other.
 		if (view === 'agenda') loadAgenda();
-		else loadGrid();
+		else {
+			loadGrid();
+			if (orientation.isPortrait) loadAgenda();
+		}
 	}
 
 	function reloadEverything() {
@@ -187,6 +200,12 @@
 		{:else}
 			<DayWeekView days={visibleDays} />
 		{/if}
+		{#if isPortrait}
+			<section class="upcoming">
+				<h2>Coming up</h2>
+				<AgendaList items={visibleItems} />
+			</section>
+		{/if}
 	{/if}
 </main>
 
@@ -229,5 +248,34 @@
 		align-items: center;
 		gap: 1rem;
 		margin-top: 1rem;
+	}
+
+	.upcoming {
+		margin-top: 1.5rem;
+		border-top: 1px solid rgba(128, 128, 128, 0.3);
+		padding-top: 0.5rem;
+	}
+
+	.upcoming h2 {
+		font-size: 1rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		opacity: 0.6;
+		margin: 0.5rem 0 0;
+	}
+
+	/* Portrait is 1080px wide on the wall panel, so the header's two halves no
+	   longer fit on one line and the generous padding costs real estate the
+	   calendar needs. */
+	@media (orientation: portrait) {
+		main {
+			padding: 1rem 0.75rem 2rem;
+		}
+
+		header {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.5rem;
+		}
 	}
 </style>

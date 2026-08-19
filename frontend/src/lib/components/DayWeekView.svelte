@@ -142,10 +142,19 @@
 		opacity: 0.6;
 	}
 
-	/* One column per day stops working long before a phone-sized screen. */
-	@media (max-width: 60rem) {
+	/* One column per day stops working long before a phone-sized screen, and
+	   it never works in portrait: the wall panel is 1080px wide that way up,
+	   which is wider than this breakpoint, so seven columns would survive at
+	   ~150px each. Orientation is checked as well as width for that reason. */
+	@media (max-width: 60rem), (orientation: portrait) {
 		.columns {
 			grid-template-columns: minmax(0, 1fr);
+		}
+
+		/* Stacked days only need to be as tall as their contents; the fixed
+		   minimum exists to keep side-by-side columns even. */
+		section {
+			min-height: 0;
 		}
 	}
 </style>
