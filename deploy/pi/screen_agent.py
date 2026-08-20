@@ -14,8 +14,9 @@ The Pi 5 makes this harder than the older guides suggest. `vcgencmd
 display_power` was removed with the move to Wayland/labwc and now answers
 "Command not registered", and a USB-C portable monitor exposes no
 /sys/class/backlight node either - so the two mechanisms most kiosk guides
-reach for are both unavailable. What is left is asking the compositor, via
-wlopm or wlr-randr.
+reach for are both unavailable. What is left is asking whatever owns the
+display: wlopm or wlr-randr under labwc, and GNOME's own screensaver on a
+desktop image, where Mutter implements neither of those protocols.
 
 Portable monitors vary in whether they honour that: some sleep properly, some
 show a floating "No Signal" logo, some ignore it entirely. `probe` is how you
@@ -49,15 +50,28 @@ MAX_POLL_SECONDS = 300
 class Mechanism:
     """One way of asking the display to turn off."""
 
-    def __init__(self, name: str, tool: str, off: list[str], on: list[str], note: str):
+    def __init__(
+        self,
+        name: str,
+        tool: str,
+        off: list[str],
+        on: list[str],
+        note: str,
+        check=None,
+    ):
         self.name = name
         self.tool = tool
         self.off = off
         self.on = on
         self.note = note
+        # An extra test for mechanisms whose tool being installed says nothing
+        # about whether it can work here - see gnome_screensaver_present.
+        self.check = check
 
     def available(self) -> bool:
-        return shutil.which(self.tool) is not None
+        if shutil.which(self.tool) is None:
+            return False
+        return self.check is None or self.check()
 
     def apply(self, state: str, dry_run: bool = False) -> bool:
         command = self.on if state == "on" else self.off
@@ -75,31 +89,82 @@ class Mechanism:
         return False
 
 
-# Ordered by preference. wlopm speaks the wlr-output-power-management protocol,
-# which is what labwc implements and is the closest thing to a real DPMS off.
-# wlr-randr disables the output instead - a bigger hammer, and on some panels
-# the only one that actually darkens them, but it can disturb window geometry.
+def gnome_screensaver_present() -> bool:
+    """True when there is a GNOME screensaver on the session bus to talk to.
+
+    gdbus ships with glib and exists on machines with no GNOME at all, so
+    `which gdbus` alone would make this mechanism look available in a labwc
+    session where it can only ever fail. Ask the bus instead.
+    """
+    if shutil.which("gdbus") is None:
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "gdbus", "introspect", "--session",
+                "--dest", "org.gnome.ScreenSaver",
+                "--object-path", "/org/gnome/ScreenSaver",
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+# Ordered by preference. The GNOME one goes first because its availability
+# check is the only exact one: the others test that a binary is installed,
+# which on a desktop image says nothing about whether it can work.
+#
+# wlopm speaks the wlr-output-power-management protocol, which is what labwc
+# implements and is the closest thing to a real DPMS off. wlr-randr disables
+# the output instead - a bigger hammer, and on some panels the only one that
+# actually darkens them, but it can disturb window geometry. Mutter (GNOME)
+# implements neither protocol, so on a desktop image both are dead ends no
+# matter how they are installed.
 MECHANISMS = [
+    Mechanism(
+        "gnome",
+        "gdbus",
+        off=[
+            "gdbus", "call", "--session",
+            "--dest", "org.gnome.ScreenSaver",
+            "--object-path", "/org/gnome/ScreenSaver",
+            "--method", "org.gnome.ScreenSaver.SetActive", "true",
+        ],
+        on=[
+            "gdbus", "call", "--session",
+            "--dest", "org.gnome.ScreenSaver",
+            "--object-path", "/org/gnome/ScreenSaver",
+            "--method", "org.gnome.ScreenSaver.SetActive", "false",
+        ],
+        note=(
+            "GNOME's own screensaver, over the session bus. Blanks for certain; "
+            "whether GNOME then powers the output down is what probe is for."
+        ),
+        check=gnome_screensaver_present,
+    ),
     Mechanism(
         "wlopm",
         "wlopm",
         off=["wlopm", "--off", "*"],
         on=["wlopm", "--on", "*"],
-        note="Wayland output power management. Preferred; may not be packaged on Bookworm.",
+        note="Wayland output power management. labwc only - Mutter does not implement it.",
     ),
     Mechanism(
         "wlr-randr",
         "wlr-randr",
         off=["wlr-randr", "--output", "HDMI-A-1", "--off"],
         on=["wlr-randr", "--output", "HDMI-A-1", "--on"],
-        note="Disables the output. Packaged on Bookworm. Check the output name with `wlr-randr`.",
+        note="Disables the output. labwc only. Check the output name with `wlr-randr`.",
     ),
     Mechanism(
         "xset",
         "xset",
         off=["xset", "dpms", "force", "off"],
         on=["xset", "dpms", "force", "on"],
-        note="X11 only - irrelevant under labwc, kept for a non-Wayland fallback.",
+        note="X11 only - irrelevant under labwc and GNOME/Wayland; a bare-X fallback.",
     ),
 ]
 
@@ -112,7 +177,10 @@ def find_mechanism(name: str | None) -> Mechanism | None:
                     # Say so now rather than letting every poll fail at exec
                     # time with an errno the journal makes look like a bug.
                     logger.warning(
-                        "Mechanism %r is named but %s is not installed",
+                        "Mechanism %r is named but does not look usable here: "
+                        "check that %s is installed, and that this is running "
+                        "somewhere it can reach the display (the gnome "
+                        "mechanism needs the desktop session's bus)",
                         name,
                         mechanism.tool,
                     )
@@ -147,8 +215,9 @@ def run(args: argparse.Namespace) -> int:
     mechanism = find_mechanism(args.mechanism)
     if mechanism is None and not args.dry_run:
         logger.error(
-            "No blanking mechanism available. Install wlopm or wlr-randr, or run "
-            "with --dry-run to check the schedule without touching the screen."
+            "No blanking mechanism available. Under GNOME the agent must run "
+            "inside the desktop session; under labwc install wlopm or wlr-randr. "
+            "Or run with --dry-run to check the schedule without touching the screen."
         )
         return 1
     if mechanism:
@@ -195,8 +264,11 @@ def probe(args: argparse.Namespace) -> int:
 
     available = [m for m in MECHANISMS if m.available()]
     if not available:
-        print("None of the known tools are installed. Try: sudo apt install wlopm wlr-randr")
-        print("(wlopm may not be packaged on Bookworm; wlr-randr is.)")
+        print("Nothing usable here.")
+        print("  under GNOME: the agent must run inside the desktop session, so that")
+        print("    org.gnome.ScreenSaver is on its bus - check with `systemctl --user`,")
+        print("    not `sudo systemctl`.")
+        print("  under labwc:  sudo apt install wlopm wlr-randr")
         return 1
 
     for mechanism in MECHANISMS:
