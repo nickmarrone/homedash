@@ -159,15 +159,49 @@ export async function fetchWeather(): Promise<Weather> {
 	return response.json();
 }
 
+/** How much of the panel one photo takes: 'full' agrees with the orientation
+ * the panel is mounted in, 'half' does not and is shown paired with another. */
+export type PhotoSlot = 'full' | 'half';
+
+export interface Photo {
+	id: number;
+	slot: PhotoSlot;
+	/** The size the derivative was rendered at, so the img can be sized before
+	 * it loads and the crossfade never reflows mid-transition. */
+	width: number;
+	height: number;
+	/** Carries the content hash, so it is safe to cache forever and changes
+	 * the moment the photo does. */
+	url: string;
+}
+
+export interface PhotoPlaylist {
+	dwell_seconds: number;
+	idle_minutes: number;
+	photos: Photo[];
+}
+
+export type PanelOrientation = 'landscape' | 'portrait';
+
+export async function fetchPhotos(orientation: PanelOrientation): Promise<PhotoPlaylist> {
+	const response = await fetch(`/api/photos?orientation=${orientation}`);
+	if (!response.ok) throw new Error(`photos fetch failed: ${response.status}`);
+	return response.json();
+}
+
 export interface Heartbeat {
 	/** The server's current date in the home timezone. The panel must not read
 	 * its own clock to decide the day has rolled over - see format.ts. */
 	today: string;
 	now: string;
+	/** Whether the screen schedule says the display should be lit. The
+	 * screensaver must not start when it says "off", and the panel renders
+	 * black instead - see components/PanelBlank.svelte. */
+	screen?: 'on' | 'off';
 }
 
 export interface UpdateStreamHandlers {
-	/** An "events.updated" or "weather.updated" name. */
+	/** An "events.updated", "weather.updated" or "photos.updated" name. */
 	onEvent: (eventType: string) => void;
 	onHeartbeat?: (heartbeat: Heartbeat) => void;
 	/** Fired when the stream reopens after dropping. EventSource retries on its
@@ -191,6 +225,7 @@ export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 	};
 	source.addEventListener('events.updated', forward);
 	source.addEventListener('weather.updated', forward);
+	source.addEventListener('photos.updated', forward);
 
 	source.addEventListener('heartbeat', (event: MessageEvent) => {
 		handlers.onMessage?.();

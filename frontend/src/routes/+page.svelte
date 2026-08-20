@@ -4,6 +4,7 @@
 		fetchAgenda,
 		fetchCalendarView,
 		fetchCalendars,
+		fetchPhotos,
 		fetchWeather,
 		subscribeToUpdates,
 		type AgendaCalendar,
@@ -11,9 +12,11 @@
 		type CalendarView,
 		type CalendarViewName,
 		type Heartbeat,
+		type PhotoPlaylist,
 		type Weather
 	} from '$lib/api';
 	import { createOrientation } from '$lib/orientation.svelte';
+	import { startIdleTimer, type IdleTimer } from '$lib/idle';
 	import { startWatchdog } from '$lib/watchdog';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
@@ -24,6 +27,7 @@
 	import MonthGrid from '$lib/components/MonthGrid.svelte';
 	import SkyEvents from '$lib/components/SkyEvents.svelte';
 	import PeriodNav from '$lib/components/PeriodNav.svelte';
+	import Screensaver from '$lib/components/Screensaver.svelte';
 	import ViewSwitcher from '$lib/components/ViewSwitcher.svelte';
 	import WeatherWidget from '$lib/components/WeatherWidget.svelte';
 
@@ -45,10 +49,28 @@
 	let serverToday = $state<string | null>(null);
 	let serverNow = $state<string | null>(null);
 
+	let playlist = $state<PhotoPlaylist | null>(null);
+	let idle = $state(false);
+	// Starts lit so a panel that has not had its first heartbeat yet shows the
+	// calendar. Assuming "off" would flash the screen black on every reload.
+	let screenOn = $state(true);
+	let idleTimer: IdleTimer | null = null;
+
 	// Rotating the panel changes what needs fetching, not just how it looks:
-	// portrait shows the agenda under the calendar, so it needs both.
-	const orientation = createOrientation(() => loadEvents());
+	// portrait shows the agenda under the calendar, so it needs both. The photo
+	// playlist changes too - which photos are the awkward ones inverts with the
+	// panel, so the slots come back different.
+	const orientation = createOrientation(() => {
+		loadEvents();
+		loadPhotos();
+	});
 	let isPortrait = $derived(orientation.isPortrait);
+
+	// Bedtime wins over idleness: a screen that should be dark is not a screen
+	// that should be showing photographs.
+	let screensaverOn = $derived(
+		idle && screenOn && (playlist?.photos.length ?? 0) > 0
+	);
 
 	let visibleItems = $derived(items.filter((item) => isVisible(item, hiddenCalendars)));
 
@@ -114,6 +136,29 @@
 		weather = await fetchWeather();
 	}
 
+	async function loadPhotos() {
+		const next = await fetchPhotos(orientation.isPortrait ? 'portrait' : 'landscape');
+		playlist = next;
+		// The idle timeout is server configuration, so the timer cannot be
+		// started until the first playlist has arrived with it.
+		restartIdleTimer(next.idle_minutes);
+	}
+
+	function restartIdleTimer(idleMinutes: number) {
+		idleTimer?.stop();
+		idleTimer = startIdleTimer({
+			idleAfterMs: Math.max(1, idleMinutes) * 60_000,
+			onIdle: () => (idle = true),
+			onActive: () => (idle = false)
+		});
+	}
+
+	function dismissScreensaver() {
+		// The overlay swallowed the tap, so the window listener never saw it.
+		idle = false;
+		idleTimer?.notify();
+	}
+
 	function loadEvents() {
 		// In portrait both are on screen at once, so both are fetched. The two
 		// endpoints answer different questions - the grid covers the period
@@ -130,6 +175,7 @@
 		loadEvents();
 		loadCalendars();
 		loadWeather();
+		loadPhotos();
 	}
 
 	function onHeartbeat(heartbeat: Heartbeat) {
@@ -138,6 +184,11 @@
 		// having changed is the ordinary case, and it is exactly when the clock
 		// still needs to advance.
 		serverNow = heartbeat.now;
+
+		// The schedule is the server's to decide, for the same reason the date
+		// is: the panel's own clock is not trusted anywhere in this app. An
+		// older backend omits the field, in which case the panel stays lit.
+		screenOn = heartbeat.screen !== 'off';
 
 		if (serverToday === heartbeat.today) return;
 		const rolledOver = serverToday !== null;
@@ -160,6 +211,7 @@
 		loadEvents();
 		loadCalendars();
 		loadWeather();
+		loadPhotos();
 
 		const watchdog = startWatchdog();
 
@@ -176,12 +228,14 @@
 					loadEvents();
 					loadCalendars();
 				}
-				if (eventType === 'weather.updated') loadWeather();
+					if (eventType === 'weather.updated') loadWeather();
+					if (eventType === 'photos.updated') loadPhotos();
 			}
 		});
 
 		return () => {
 			watchdog.stop();
+			idleTimer?.stop();
 			unsubscribe();
 		};
 	});
@@ -234,6 +288,10 @@
 		{/if}
 	{/if}
 </main>
+
+{#if screensaverOn && playlist}
+	<Screensaver {playlist} onDismiss={dismissScreensaver} />
+{/if}
 
 <style>
 	:global(html) {

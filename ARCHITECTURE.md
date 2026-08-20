@@ -279,6 +279,8 @@ render at build time.
 | `api.ts` | **All** types, all fetchers, and the SSE subscriber |
 | `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour` |
 | `watchdog.ts` | Reloads the page if the SSE stream goes quiet |
+| `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
+| `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
 | `calendarVisibility.ts` | localStorage set of hidden calendar ids |
 | `viewPreference.ts` | localStorage of the last-selected view |
@@ -296,6 +298,7 @@ render at build time.
 | `PeriodNav.svelte` | ‹ / title / Today / › |
 | `ViewSwitcher.svelte` | Agenda / Day / Week / Month segmented control |
 | `WeatherWidget.svelte` | Current conditions, H/L, sunrise/sunset, AQI |
+| `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
 
 ### Idioms
 
