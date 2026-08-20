@@ -38,6 +38,11 @@ export interface CalendarView {
 	anchor: string;
 	title: string;
 	today: string;
+	/** The server's clock when it built this response. Carried so a freshly
+	 * loaded panel can dim what has already finished immediately, instead of
+	 * waiting up to 30 seconds for the first SSE heartbeat to tell it the
+	 * time. */
+	now: string;
 	/** The backend does the date arithmetic, so navigation needs none here. */
 	prev_anchor: string;
 	next_anchor: string;
@@ -84,6 +89,33 @@ export interface WeatherUnits {
 	temperature_2m_min?: string;
 }
 
+export interface MoonPhase {
+	/** "Waxing Gibbous" and friends. */
+	phase: string;
+	/** Illuminated fraction of the disc, 0 to 1. */
+	illumination: number;
+	age_days: number;
+	/** Which side is lit: waxing and waning are equally illuminated and are
+	 * mirror images, and the whole picture flips again south of the equator. */
+	waxing: boolean;
+	southern: boolean;
+}
+
+export interface SkyEvent {
+	kind: 'moon' | 'meteor_shower' | 'season';
+	name: string;
+	/** Local calendar date, YYYY-MM-DD. */
+	date: string;
+	detail: string | null;
+}
+
+/** Computed on the server from the configured coordinates, not fetched from
+ * Open-Meteo - which is why it is still here when the weather is not. */
+export interface Astro {
+	moon: MoonPhase;
+	events: SkyEvent[];
+}
+
 export interface Weather {
 	current?: WeatherCurrent;
 	daily?: WeatherDaily;
@@ -92,6 +124,7 @@ export interface Weather {
 	current_units?: WeatherUnits;
 	daily_units?: WeatherUnits;
 	hourly_units?: WeatherUnits;
+	astro?: Astro;
 	fetched_at?: string;
 }
 

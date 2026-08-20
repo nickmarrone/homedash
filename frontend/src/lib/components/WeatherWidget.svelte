@@ -2,6 +2,7 @@
 	import type { Weather } from '$lib/api';
 	import { formatTime } from '$lib/format';
 	import { weatherDescription } from '$lib/weatherCodes';
+	import MoonGlyph from './MoonGlyph.svelte';
 
 	let { weather }: { weather: Weather | null } = $props();
 
@@ -9,6 +10,7 @@
 	// Open-Meteo returns "°F"/"°C" in *_units; strip the degree sign so the
 	// markup keeps its own and we render "72°F" rather than "72°°F".
 	let unit = $derived((weather?.current_units?.temperature_2m ?? '').replace('°', ''));
+	let moon = $derived(weather?.astro?.moon);
 	let today = $derived.by(() => {
 		const daily = weather?.daily;
 		if (!daily?.time?.length) return null;
@@ -37,10 +39,22 @@
 				{/if}
 			</div>
 		{/if}
-		{#if weather?.air_quality?.us_aqi !== undefined}
-			<div class="aqi">AQI {Math.round(weather.air_quality.us_aqi)}</div>
-		{/if}
 	{/if}
+	<!-- Outside the weather branch on purpose: the moon is computed from the
+	     configured coordinates, so it is still known when Open-Meteo is not
+	     answering. A panel that loses the sky as well as the forecast makes an
+	     outage look worse than it is. -->
+	<div class="details">
+		{#if weather?.air_quality?.us_aqi !== undefined}
+			<span>AQI {Math.round(weather.air_quality.us_aqi)}</span>
+		{/if}
+		{#if moon}
+			<span class="moon">
+				<MoonGlyph {moon} />
+				{moon.phase}
+			</span>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -77,9 +91,9 @@
 		margin-top: 0.25rem;
 	}
 
-	.aqi {
-		opacity: 0.6;
-		font-size: 0.85rem;
-		margin-top: 0.25rem;
+	.moon {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
 	}
 </style>

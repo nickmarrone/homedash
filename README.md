@@ -197,6 +197,23 @@ panel over SSE — the page never fetches weather on load.
 Set `HOMEDASH_WEATHER_LATITUDE` / `HOMEDASH_WEATHER_LONGITUDE` for your home, and
 `HOMEDASH_WEATHER_TEMPERATURE_UNIT` to `fahrenheit` or `celsius`. No API key is needed.
 
+## The sky
+
+Beside the forecast the header shows the **current moon phase**, drawn to its real illuminated
+fraction rather than rounded to one of eight icons. Above the hourly strip is a line of
+**upcoming sky events** for the next three weeks: new and full moons, meteor shower peaks, and
+the next equinox or solstice. Anything happening tonight is picked out in bold.
+
+All of it is computed from your configured coordinates — there is no second API to configure and
+nothing else to go down, which is also why the moon is still there when Open-Meteo is not.
+Your latitude does real work: a meteor shower whose radiant never rises where you live is not
+listed (the Perseids are simply absent in Sydney), seasons are named for your hemisphere, and
+the moon is drawn lit on the correct side. A shower peaking under a near-full moon says so,
+because that is the difference between a good night out and a wasted one.
+
+Accuracy is a couple of minutes for moon phases and under an hour for solstices, both far
+tighter than a date needs. See `backend/src/app/astro.py` for the algorithms and their sources.
+
 ---
 
 ## Configuration reference

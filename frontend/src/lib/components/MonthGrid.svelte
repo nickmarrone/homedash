@@ -99,12 +99,11 @@
 		background: rgba(128, 128, 128, 0.2);
 	}
 
-	/* Days already gone. Kept legible - the month view is also how you check
-	   what happened - but clearly behind the rest of the month. Padding days
-	   are dimmed by .outside already; this must not stack with it into
-	   invisibility, so the two are the same order of magnitude. */
-	.past {
-		opacity: 0.55;
+	/* A day already gone dims its date only. The chips inside carry their own
+	   finished treatment, and fading the whole cell as well would multiply the
+	   two opacities into something barely legible. */
+	.past .daynum {
+		opacity: 0.45;
 	}
 
 	.daynum {
@@ -147,13 +146,10 @@
 		border-left-color: transparent;
 	}
 
-	/* An event that has already finished. Struck through as well as faded:
-	   inside today's cell a fade alone is easy to mistake for one of the
-	   padding-day dims.
-
-	   Only in a day that is still current - a past cell is dimmed whole, and
-	   the two fades would multiply into something barely legible. */
-	.cell:not(.past) .passed {
+	/* An event that has already finished, on any day. Struck through as well as
+	   faded, because a fade alone is easy to mistake for one of the
+	   padding-day dims the grid is already full of. */
+	.passed {
 		opacity: 0.5;
 		text-decoration: line-through;
 		text-decoration-thickness: 1px;

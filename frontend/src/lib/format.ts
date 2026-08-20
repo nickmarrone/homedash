@@ -17,16 +17,34 @@ export function dateKey(iso: string): string {
 	return iso.slice(0, 10);
 }
 
-export function formatDayHeading(dateKeyValue: string): string {
+/**
+ * "Today", "Tomorrow", or "Wednesday, August 19".
+ *
+ * `today` is the server's date, from the SSE heartbeat or the grid response.
+ * Pass it whenever it is known: the fallback reads the browser's own clock,
+ * and a panel whose OS timezone differs from HOMEDASH_HOME_TIMEZONE then
+ * labels the wrong day "Today" - visibly, right beside a grid the server
+ * already dated correctly.
+ */
+export function formatDayHeading(dateKeyValue: string, today: string | null = null): string {
+	if (today) {
+		if (dateKeyValue === today) return 'Today';
+		if (dateKeyValue === addDays(today, 1)) return 'Tomorrow';
+	} else {
+		const clockToday = new Date();
+		clockToday.setHours(0, 0, 0, 0);
+		const [y, m, d] = dateKeyValue.split('-').map(Number);
+		const diffDays = Math.round((new Date(y, m - 1, d).getTime() - clockToday.getTime()) / 86_400_000);
+		if (diffDays === 0) return 'Today';
+		if (diffDays === 1) return 'Tomorrow';
+	}
 	const [year, month, day] = dateKeyValue.split('-').map(Number);
-	const date = new Date(year, month - 1, day);
-	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-	const diffDays = Math.round((date.getTime() - today.getTime()) / 86_400_000);
-
-	if (diffDays === 0) return 'Today';
-	if (diffDays === 1) return 'Tomorrow';
-	return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+	return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString(undefined, {
+		timeZone: 'UTC',
+		weekday: 'long',
+		month: 'long',
+		day: 'numeric'
+	});
 }
 
 /**
@@ -65,6 +83,37 @@ export function hasPassed(
 	// equal to its start when there was none.
 	if (item.all_day) return false;
 	return item.ends_at.slice(0, 19) <= now.slice(0, 19);
+}
+
+/**
+ * A dated sky event relative to the server's today: "Tonight", "Tomorrow", or
+ * "Wed, Aug 26".
+ *
+ * Separate from `formatDayHeading` because the wording and the width differ:
+ * "Tonight" is what makes somebody actually go outside and look, and the strip
+ * has one line to spare, so the date is abbreviated.
+ *
+ * The `Date` below only ever does calendar arithmetic on date components, in
+ * UTC, and never reads the clock.
+ */
+export function formatSkyDate(date: string, today: string | null): string {
+	if (today) {
+		if (date === today) return 'Tonight';
+		if (date === addDays(today, 1)) return 'Tomorrow';
+	}
+	const [year, month, day] = date.split('-').map(Number);
+	return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString(undefined, {
+		timeZone: 'UTC',
+		weekday: 'short',
+		month: 'short',
+		day: 'numeric'
+	});
+}
+
+/** `date` shifted by whole days, as another YYYY-MM-DD string. */
+export function addDays(date: string, days: number): string {
+	const [year, month, day] = date.split('-').map(Number);
+	return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
 // Compact hour label for the hourly strip: "2 PM", "11 AM". Same wall-clock

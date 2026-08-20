@@ -82,9 +82,10 @@
 		background: rgba(128, 128, 128, 0.2);
 	}
 
-	/* A whole day that is over. Dimmer than a passed event inside today,
-	   because there is nothing left in it to read. */
-	.past {
+	/* A day that is over dims its heading only. The events inside carry their
+	   own finished treatment, and fading the column as well would multiply the
+	   two opacities into something barely legible. */
+	.past h3 {
 		opacity: 0.55;
 	}
 
@@ -129,15 +130,15 @@
 	   fades with it, or a finished event would still carry the loudest mark in
 	   the column.
 
-	   Only inside a day that is still current. A whole past day is already
-	   dimmed as a column, and the two fades would multiply into something
-	   barely visible; striking through every event of every past day would
-	   also be noise, since the column heading already says it is over. */
-	section:not(.past) .passed {
+	   Applied the same way on every day, not just today: an appointment that
+	   happened last Tuesday is no less finished than one that ended an hour
+	   ago, and treating the two differently makes the strike-through look like
+	   it means something else. */
+	.passed {
 		opacity: 0.45;
 	}
 
-	section:not(.past) .passed .title {
+	.passed .title {
 		font-weight: 500;
 		text-decoration: line-through;
 		text-decoration-thickness: 1px;

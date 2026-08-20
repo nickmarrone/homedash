@@ -22,6 +22,7 @@
 	import DayWeekView from '$lib/components/DayWeekView.svelte';
 	import HourlyForecast from '$lib/components/HourlyForecast.svelte';
 	import MonthGrid from '$lib/components/MonthGrid.svelte';
+	import SkyEvents from '$lib/components/SkyEvents.svelte';
 	import PeriodNav from '$lib/components/PeriodNav.svelte';
 	import ViewSwitcher from '$lib/components/ViewSwitcher.svelte';
 	import WeatherWidget from '$lib/components/WeatherWidget.svelte';
@@ -89,6 +90,12 @@
 	async function loadGrid() {
 		if (view === 'agenda') return;
 		grid = await fetchCalendarView(view, anchor ?? undefined);
+		// Set the clock from the same response that carried the events, so the
+		// first render already knows which of them are over. Waiting for the
+		// heartbeat leaves a freshly loaded panel showing a whole morning of
+		// finished appointments at full strength until one arrives.
+		serverToday = grid.today;
+		serverNow = grid.now;
 	}
 
 	async function loadCalendars() {
@@ -189,6 +196,11 @@
 		<h1>HomeDash</h1>
 		<WeatherWidget {weather} />
 	</header>
+	<SkyEvents
+		events={weather?.astro?.events ?? []}
+		today={serverToday}
+		moon={weather?.astro?.moon ?? null}
+	/>
 	<HourlyForecast {weather} />
 	<div class="controls">
 		<ViewSwitcher {view} onSelect={selectView} />
@@ -196,7 +208,7 @@
 	</div>
 
 	{#if view === 'agenda'}
-		<AgendaList items={visibleItems} />
+		<AgendaList items={visibleItems} today={serverToday} now={serverNow} />
 	{:else if grid}
 		<PeriodNav
 			title={grid.title}
@@ -212,7 +224,7 @@
 		{#if isPortrait}
 			<section class="upcoming">
 				<h2>Coming up</h2>
-				<AgendaList items={visibleItems} />
+				<AgendaList items={visibleItems} today={serverToday} now={serverNow} />
 			</section>
 		{/if}
 	{/if}
