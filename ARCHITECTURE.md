@@ -37,7 +37,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `config.py` | `Settings` (pydantic-settings) and the config models it parses |
 | `db.py` | Engine, `get_session` dependency, `run_migrations` |
 | `models.py` | Every SQLModel table |
-| `scheduler.py` | APScheduler jobs: calendar syncs, heartbeat, weather |
+| `scheduler.py` | APScheduler jobs: calendar syncs, heartbeat, weather, comets, photo index |
 | `sse.py` | `SSEBroadcaster` fan-out to connected panels |
 | `devices.py` | Screen-schedule arithmetic and the device row reconciler |
 | `api/routes.py` | Every HTTP endpoint, on one `APIRouter` |
@@ -45,6 +45,8 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
 | `weather/client.py` | Open-Meteo fetch and its in-process cache |
+| `astro.py` | Moon phase, meteor showers, equinoxes — computed, no I/O at all |
+| `comets.py` | MPC orbital elements: fetch, cache, propagate, filter to what is actually visible |
 | `cli/` | One-off operator commands (`homedash-google-auth`, `homedash-inspect-calendars`) |
 
 ### `calendars/`
@@ -71,6 +73,17 @@ change?". When something did, that source's rows are deleted and rebuilt wholesa
 Incremental upserts would mean rewriting the materialization path, which is where sync
 bugs live, to save rebuilding a few hundred rows.
 
+**…and rebuild anyway once an hour.** `needs_full_resync()` forces a fetch regardless of
+what change detection says, every `full_resync_interval_minutes` (60). It has two jobs. The
+materialization window rolls forward a day at a time, so a calendar nobody ever edits would
+otherwise never be re-expanded and the far end of its window would quietly empty out. It is
+also the backstop for change detection being *wrong*, which is not hypothetical: Google's
+sync-token probe did not pass `showDeleted`, a deletion is reported as an ordinary event
+whose status is `cancelled`, and so a cancelled appointment read as "nothing changed" and
+stayed on the wall. That specific bug is fixed in `google_source.py`, but the class of it —
+a provider signal that misses a change, with nothing to notice — is what the hourly rebuild
+bounds.
+
 ### `photos/`
 
 | Module | Responsibility |
@@ -96,6 +109,42 @@ sideways *and* crops along the wrong axis.
 Orphaned derivatives are removed by a **sweep** at the end of each scan, not by unlinking
 alongside each deleted row: two copies of one photo hash identically and share derivative
 files, so per-row unlinking would blank the surviving copy.
+
+### Astronomy — `astro.py`, `comets.py`
+
+**Computed, not fetched.** Open-Meteo has no moon or meteor data, and every service that
+does is one more thing that can be down, rate-limited, or want a key — for numbers that are
+a few dozen lines of arithmetic and change on nobody's schedule but the solar system's.
+`astro.py` does **no I/O whatsoever**, and every function in it takes `now` as an argument
+rather than reading the clock.
+
+Accuracy is chosen for something read across a kitchen, and the cheap version is not good
+enough: moon phases come from Meeus ch. 49 rather than "days since a known new moon, modulo
+29.53", because the Moon's orbit is an ellipse and the naive form drifts up to ~14 hours —
+enough to print "Full moon" on the wrong evening about a third of the time. Equinoxes use
+the mean expressions of ch. 27 without the periodic terms, worth ~20 minutes, which cannot
+move the date unless the event falls that close to local midnight.
+
+`comets.py` is the exception on both counts: a naked-eye comet is a *discovery*, not an
+annual event, so there is nothing to hard-code and a feed is the only honest source. It is
+therefore the one module here that reaches the network, and it is built to fail quietly —
+elements are cached on disk beside the database (`CometEls.txt`, so the existing volume
+already persists them), a failed refresh keeps the last good copy, a bad line is skipped
+rather than failing the file, and every parsed value is range-checked so a format change
+surfaces as "no comets" rather than a comet at an impossible distance.
+
+**The dependency runs one way.** `comets.py` imports from `astro.py`, never the reverse.
+`astro_summary(..., extra_events=...)` is the seam: comets are passed *in* as already-shaped
+events, which is exactly what keeps the I/O-free module I/O-free.
+
+Magnitudes are not trusted. Positions are celestial mechanics; brightness depends on how
+much ice is left and how it behaves near the Sun, and comets routinely miss forecasts by
+magnitudes in both directions. Hence a conservative `comet_magnitude_limit` (6.0) — a listed
+comet is "worth a look", never a promise.
+
+The sky is assembled in the `/api/weather` handler rather than folded into the weather cache
+on refresh, deliberately: it needs no network, and Open-Meteo being unreachable must not also
+take the moon off the panel. It is cheaper than serializing the forecast it travels with.
 
 ### Lifespan ordering — `main.py`
 
@@ -125,6 +174,10 @@ unreachable.
 | `devices` | id, name, screen_schedule, last_seen | One row, id 1. `screen_schedule` is JSON text, not columns |
 | `photos` | id, path (unique), hash, width, height, orientation, size, mtime_ns, error, added_at | `size`/`mtime_ns` skip re-hashing an unchanged file; `error` keeps a broken file from being retried forever |
 
+Not everything persistent is a row: the comet elements are a cached MPC text file beside
+the database, and photo derivatives are files in the cache directory. Both are rebuildable
+from their source, which is why neither earned a table.
+
 No SQLModel `Relationship` attributes anywhere — joins are written explicitly in queries.
 No DB-level cascades either; child rows are deleted by hand in the reconcilers.
 
@@ -143,7 +196,7 @@ an RRULE expansion, and month view is a single indexed range query.
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
 | `GET /api/photos?orientation=landscape\|portrait` | Screensaver playlist: each photo's slot, size, and hashed URL |
 | `GET /api/photos/{id}/image?orientation=&v=` | One pre-rendered JPEG derivative, `immutable` |
-| `GET /api/weather` | The weather cache, verbatim |
+| `GET /api/weather` | The weather cache, plus `astro` — the moon and the next few weeks of sky |
 | `GET /api/events/stream` | SSE (`EventSourceResponse`) |
 
 **There are no response models.** Handlers are annotated `-> dict` / `-> list[dict]` and
@@ -170,6 +223,7 @@ check-in, throttled to at most one write a minute. It is deliberately non-idempo
 | `heartbeat` | 30 seconds | `heartbeat` with `{today, now, screen}` |
 | `photo_index` | `photo_index_interval_minutes` (15) | `photos.updated` if changed |
 | `weather_refresh` | `weather_cache_minutes` (20) | `weather.updated` if changed |
+| `comet_refresh` | `comet_refresh_hours` (24) | `weather.updated` if the elements changed |
 
 Every job: `next_run_time=datetime.now()` so it fires at boot rather than after one full
 interval; its own `with Session(engine)`; per-item `try/except` with `session.rollback()`
@@ -178,6 +232,11 @@ and `logger.exception`, never letting an error escape and kill the job; and it p
 
 ICS and the fast kinds are split because providers regenerate `.ics` files on their own
 schedule — polling harder just re-fetches the same stale bytes.
+
+`comet_refresh` is the exception to "every job runs": it is registered only when
+`comets_enabled`, so a panel configured to stay entirely self-contained makes no outbound
+request at all. Once a day is generous for it — these are orbits, and a newly discovered
+comet takes weeks to become worth looking at.
 
 ### SSE — `sse.py`
 
@@ -270,14 +329,18 @@ render at build time.
 `user-select: none` on everything except inputs.
 
 `+page.svelte` owns all state and all data loading, and wires everything in a single
-`onMount` that returns a cleanup closure.
+`onMount` that returns a cleanup closure. Its header stacks weather, the sky strip, the
+hourly forecast, then a `.controls` row holding the calendar legend on the left and the view
+switcher on the right. The switcher is pushed right by `margin-left: auto` on its own
+wrapper rather than by `justify-content`, so it still sits against the right edge on a
+single-calendar panel, where the legend renders nothing at all.
 
 ### `lib/`
 
 | Module | Responsibility |
 |---|---|
 | `api.ts` | **All** types, all fetchers, and the SSE subscriber |
-| `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour` |
+| `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour`, `hasPassed`, `formatSkyDate`, `addDays` |
 | `watchdog.ts` | Reloads the page if the SSE stream goes quiet |
 | `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
@@ -297,7 +360,9 @@ render at build time.
 | `HourlyForecast.svelte` | 12-hour temperature and rain strip, one SVG in column units |
 | `PeriodNav.svelte` | ‹ / title / Today / › |
 | `ViewSwitcher.svelte` | Agenda / Day / Week / Month segmented control |
-| `WeatherWidget.svelte` | Current conditions, H/L, sunrise/sunset, AQI |
+| `WeatherWidget.svelte` | Current conditions, H/L, sunrise/sunset, AQI, and the moon |
+| `SkyEvents.svelte` | One-line strip: the next three sky events, comets first |
+| `MoonGlyph.svelte` | The lunar disc as inline SVG, drawn from the real illuminated fraction |
 | `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
 | `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
 
@@ -328,6 +393,12 @@ Theming is purely `color-scheme: light dark` — components use `currentColor`, 
 `inherit`, and low-alpha greys (`rgba(128,128,128,0.08–0.3)`) that read in both. Per-item
 color arrives as an inline custom property (`style:--item-color`) mixed with `color-mix`.
 
+**No emoji, anywhere.** Raspberry Pi OS Lite ships no emoji font, so on the actual wall
+panel every one renders as a tofu box. This is why the moon is drawn as inline SVG
+(`MoonGlyph.svelte`) and `PHASE_NAMES` in `astro.py` carries names rather than glyphs — and
+it is a constraint on any future icon: text or inline SVG, never a character and never an
+icon font.
+
 **Touch targets are 48px minimum** — "the smallest target that stays reliable for a
 fingertip on a wall panel, where you are often reaching rather than aiming." Press feedback
 is `:active { transform: scale(0.97) }`, because hover does not exist on touch.
@@ -351,8 +422,33 @@ time regardless of the Pi's OS timezone. `HourlyForecast.svelte` applies the sam
 find "now" — because Open-Meteo is called with `timezone=auto`, truncating both timestamps
 to 13 characters makes plain string comparison chronological, with no `Date` involved.
 
-The one exception is `formatDayHeading`, which uses `Date` for "Today"/"Tomorrow" — and the
-authoritative date for that comes from the SSE heartbeat, not the browser.
+`hasPassed()` follows the same rule for dimming events that are over: it compares the ISO
+strings directly, because the backend emits both the event timestamps and the heartbeat in
+the home timezone, so the wall-clock digits sort chronologically. It returns `false` while
+either heartbeat field is still null — dimming a *future* event is a worse error than briefly
+failing to dim a past one. Its one seam is the hour either side of a DST change, which is not
+worth a `Date` for.
+
+The exceptions are `formatDayHeading`, `formatSkyDate`, and `addDays`, which do use `Date` —
+but only for calendar arithmetic on date components, in UTC, and never to read the clock. The
+authoritative "today" they work from comes from the SSE heartbeat.
+
+### What is over, and what is now
+
+Three treatments, all driven by the heartbeat rather than the browser clock:
+
+- **Finished events dim** (`.passed`) in all four views, via `hasPassed()`.
+- **Today is marked three ways, not one** — a 3px outline, a lifted background, and the word
+  itself: a "Today" flag in `DayWeekView`, a filled pill around the date in `MonthGrid`
+  (grey rather than an inverted swatch, so it holds in both themes without a palette). The
+  outline is inset, because cells sit 2px apart and a 3px line would otherwise read as
+  belonging to the neighbouring day.
+- **A day that is over dims its heading only.** The events inside already carry the finished
+  treatment, and fading the whole cell as well would multiply the two opacities into
+  something barely legible.
+
+`is_today` comes off the server's grid payload; the `.past` comparison uses the heartbeat's
+date. Neither asks the Pi what day it is.
 
 ### The three panel states
 
@@ -472,6 +568,15 @@ which swallows error logs.
   transport into the adapter's constructor (preferred) or monkeypatching the module's
   `httpx.get`. Time is passed in as an argument — production functions take `now`
   explicitly for exactly this reason — or a `FrozenDatetime` subclass is patched in.
+- **Dense arithmetic is checked against something outside the implementation.** `test_astro.py`
+  asserts against published ephemerides with minute-wide tolerances, because a transcription
+  slip in Meeus's coefficients is wrong silently or not at all, and an hours-wide test passes
+  for the naive moon formula that this code exists to avoid. `test_comets.py` uses facts true
+  by definition instead — a comet sits at its perihelion distance at perihelion; feeding
+  Earth's own orbit in as a comet must come out at zero geocentric distance — because copying
+  an ephemeris table only proves two numbers were transcribed alike. Fixture lines for the MPC
+  parser are assembled from the documented column positions rather than copied from a real
+  file, so they test the format and not one sample of it.
 - Test names read as sentences, and docstrings explain **why the bug being guarded against
   is plausible**, not what the code does.
 
