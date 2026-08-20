@@ -141,6 +141,8 @@ an RRULE expansion, and month view is a single indexed range query.
 | `GET /api/calendar?view=day\|week\|month&anchor=` | Server-bucketed grid, plus title and prev/next anchors |
 | `GET /api/calendars` | The legend — every enabled source, so empty calendars still appear |
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
+| `GET /api/photos?orientation=landscape\|portrait` | Screensaver playlist: each photo's slot, size, and hashed URL |
+| `GET /api/photos/{id}/image?orientation=&v=` | One pre-rendered JPEG derivative, `immutable` |
 | `GET /api/weather` | The weather cache, verbatim |
 | `GET /api/events/stream` | SSE (`EventSourceResponse`) |
 
@@ -148,6 +150,13 @@ an RRULE expansion, and month view is a single indexed range query.
 build plain dicts; `serializers.py` exists only where two endpoints must emit an identical
 shape. Request params use `Query(...)` with manual validation raising `HTTPException(400)`.
 Routes stay thin — date arithmetic lives in `grid.py` and `devices.py`, not in handlers.
+
+The image endpoint is the only non-JSON response in the app. It is a pure file read — the
+resize happened at index time, the same discipline the weather cache states for itself. Its
+URL carries the content hash as `v`, which is what makes `immutable` safe: a photo replaced
+in place gets a new URL rather than a cache entry the panel would hold for a year. The `v`
+value is deliberately *not* validated on the way in — it exists to change the URL, and
+rejecting a stale one would only turn a slightly old playlist into visible gaps.
 
 `GET /api/devices/{id}/screen` writes `last_seen` as a side effect: the poll *is* the
 check-in, throttled to at most one write a minute. It is deliberately non-idempotent.
