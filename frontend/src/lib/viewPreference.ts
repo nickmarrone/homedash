@@ -5,7 +5,7 @@
 import type { CalendarViewName } from '$lib/api';
 
 const STORAGE_KEY = 'homedash:view';
-const VIEWS: CalendarViewName[] = ['agenda', 'day', 'week', 'month'];
+const VIEWS: CalendarViewName[] = ['agenda', 'day', 'next3', 'next5', 'week', 'month'];
 
 export function loadView(fallback: CalendarViewName = 'month'): CalendarViewName {
 	try {

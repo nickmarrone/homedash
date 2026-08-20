@@ -1,8 +1,10 @@
-"""Building the day, week, and month views.
+"""Building the day, lookahead, week, and month views.
 
-All three views are the same thing at different widths - a list of day
-buckets, each holding the events that touch that day - so they share one
-response shape and the frontend renders one array with different CSS.
+Every view is the same thing at a different width - a list of day buckets,
+each holding the events that touch that day - so they share one response
+shape and the frontend renders one array with different CSS. Adding the
+3- and 5-day lookaheads therefore cost a row in LOOKAHEAD_DAYS and three
+branches, not a rendering path.
 
 This lives on the server rather than in the browser, not because the date
 maths is hard, but because the frontend was deliberately built to do no
@@ -25,10 +27,18 @@ from zoneinfo import ZoneInfo
 
 from app.calendars.localtime import to_local
 
-View = Literal["day", "week", "month"]
+View = Literal["day", "next3", "next5", "week", "month"]
 WeekStart = Literal["sunday", "monday"]
 
-VIEWS: tuple[str, ...] = ("day", "week", "month")
+VIEWS: tuple[str, ...] = ("day", "next3", "next5", "week", "month")
+
+# The rolling lookaheads: a fixed number of days starting at the anchor, which
+# defaults to today. They are deliberately *not* snapped to a week boundary the
+# way `week` is - "the next three days" answers a different question from "this
+# week", and on a Sunday a snapped three-day view would be almost entirely in
+# the past. That difference is the whole feature, so it lives in
+# `normalize_anchor` rather than in a special case at the call site.
+LOOKAHEAD_DAYS: dict[str, int] = {"next3": 3, "next5": 5}
 
 MONTH_NAMES = (
     "January", "February", "March", "April", "May", "June",
@@ -56,6 +66,8 @@ def normalize_anchor(view: View, anchor: date, week_starts_on: WeekStart) -> dat
         return anchor.replace(day=1)
     if view == "week":
         return week_start_for(anchor, week_starts_on)
+    # `day` and the lookaheads start exactly where they are pointed, so their
+    # anchor is already canonical.
     return anchor
 
 
@@ -69,6 +81,8 @@ def period_bounds(view: View, anchor: date, week_starts_on: WeekStart) -> tuple[
         return anchor, anchor
     if view == "week":
         return anchor, anchor + timedelta(days=6)
+    if view in LOOKAHEAD_DAYS:
+        return anchor, anchor + timedelta(days=LOOKAHEAD_DAYS[view] - 1)
 
     last_day = calendar_module.monthrange(anchor.year, anchor.month)[1]
     first = week_start_for(anchor, week_starts_on)
@@ -82,6 +96,9 @@ def step_anchor(view: View, anchor: date, direction: int) -> date:
         return anchor + timedelta(days=direction)
     if view == "week":
         return anchor + timedelta(days=7 * direction)
+    if view in LOOKAHEAD_DAYS:
+        # A whole window at a time, so paging never re-shows a day just seen.
+        return anchor + timedelta(days=LOOKAHEAD_DAYS[view] * direction)
 
     month = anchor.month + direction
     year = anchor.year + (month - 1) // 12
@@ -95,9 +112,9 @@ def period_title(view: View, anchor: date, week_starts_on: WeekStart) -> str:
     if view == "day":
         return f"{WEEKDAY_SHORT[anchor.weekday()]}, {MONTH_NAMES[anchor.month - 1]} {anchor.day}"
 
-    first, last = period_bounds("week", anchor, week_starts_on)
+    first, last = period_bounds(view, anchor, week_starts_on)
     left = f"{MONTH_NAMES[first.month - 1][:3]} {first.day}"
-    # Only repeat the month or year when the week actually crosses one.
+    # Only repeat the month or year when the span actually crosses one.
     if first.year != last.year:
         return f"{left} {first.year} - {MONTH_NAMES[last.month - 1][:3]} {last.day} {last.year}"
     if first.month != last.month:

@@ -31,7 +31,10 @@ export interface CalendarDay {
 	items: CalendarGridItem[];
 }
 
-export type CalendarViewName = 'agenda' | 'day' | 'week' | 'month';
+/** `next3` and `next5` are the rolling lookaheads: a fixed number of days
+ * starting at the anchor, which with no anchor is today. Unlike `week` the
+ * backend does not snap them to a week boundary. */
+export type CalendarViewName = 'agenda' | 'day' | 'next3' | 'next5' | 'week' | 'month';
 
 export interface CalendarView {
 	view: string;

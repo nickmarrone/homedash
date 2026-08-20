@@ -89,8 +89,10 @@ def get_calendar(
 ) -> dict:
     """One period of the calendar, as day buckets.
 
-    Day, week, and month differ only in how many buckets come back, so the
-    frontend renders one array with different CSS. `prev_anchor` and
+    Every view differs only in how many buckets come back and where they
+    start, so the frontend renders one array with different CSS. `next3` and
+    `next5` are rolling lookaheads: unlike `week` they are not snapped to a
+    week boundary, so with no anchor they begin on today. `prev_anchor` and
     `next_anchor` are returned so navigation needs no date maths in the
     browser - see app/calendars/grid.py for why that line is drawn here.
     """

@@ -5,7 +5,7 @@ awkward cases are pinned explicitly: DST, week boundaries, year ends, and the
 two exclusive-end conventions that decide which day an event lands on.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -129,6 +129,60 @@ class TestTitles:
         assert period_title("week", date(2026, 12, 27), "sunday") == (
             "Dec 27 2026 - Jan 2 2027"
         )
+
+
+class TestLookahead:
+    """The 3- and 5-day rolling views.
+
+    Their whole point is that they start where they are pointed - which with
+    no anchor is today - rather than snapping to a week the way `week` does.
+    """
+
+    @pytest.mark.parametrize("view,length", [("next3", 3), ("next5", 5)])
+    def test_starts_on_the_anchor_and_runs_forward(self, view, length):
+        first, last = period_bounds(view, date(2026, 8, 19), "monday")
+        assert first == date(2026, 8, 19)
+        assert (last - first).days + 1 == length
+
+    @pytest.mark.parametrize("view", ["next3", "next5"])
+    @pytest.mark.parametrize("week_start", ["sunday", "monday"])
+    def test_the_anchor_is_never_snapped(self, view, week_start):
+        """A lookahead snapped to a week start would show mostly the past -
+        on a Sunday, a snapped three-day view is two days already over."""
+        anchor = normalize_anchor(view, date(2026, 8, 23), week_start)
+        assert anchor == date(2026, 8, 23)
+        assert period_bounds(view, anchor, week_start)[0] == date(2026, 8, 23)
+
+    @pytest.mark.parametrize("view,length", [("next3", 3), ("next5", 5)])
+    def test_steps_a_whole_window_so_no_day_repeats(self, view, length):
+        anchor = date(2026, 8, 19)
+        nxt = step_anchor(view, anchor, 1)
+        assert nxt == anchor + timedelta(days=length)
+        # The window just left ended the day before the next one starts.
+        assert period_bounds(view, anchor, "monday")[1] + timedelta(days=1) == nxt
+        assert step_anchor(view, nxt, -1) == anchor
+
+    def test_stepping_crosses_a_month_and_a_year(self):
+        assert step_anchor("next5", date(2026, 12, 30), 1) == date(2027, 1, 4)
+        assert step_anchor("next3", date(2026, 3, 1), -1) == date(2026, 2, 26)
+
+    def test_titles_span_the_window(self):
+        assert period_title("next3", date(2026, 8, 19), "monday") == "Aug 19 - 21, 2026"
+        assert period_title("next5", date(2026, 8, 30), "monday") == "Aug 30 - Sep 3, 2026"
+        assert period_title("next3", date(2026, 12, 31), "monday") == (
+            "Dec 31 2026 - Jan 2 2027"
+        )
+
+    @pytest.mark.parametrize("view", ["next3", "next5"])
+    def test_every_day_is_in_period(self, view):
+        """Only a month grid has padding days; a lookahead is all real days,
+        so none of them should render dimmed."""
+        anchor = date(2026, 8, 19)
+        first, last = period_bounds(view, anchor, "monday")
+        days = build_days([], first, last, anchor, view, today=anchor)
+        assert all(day["in_period"] for day in days)
+        assert days[0]["date"] == "2026-08-19"
+        assert days[0]["is_today"] is True
 
 
 class TestLocalDatesSpanned:

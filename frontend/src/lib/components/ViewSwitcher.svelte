@@ -12,6 +12,8 @@
 	const views: { id: CalendarViewName; label: string }[] = [
 		{ id: 'agenda', label: 'Agenda' },
 		{ id: 'day', label: 'Day' },
+		{ id: 'next3', label: '3 Day' },
+		{ id: 'next5', label: '5 Day' },
 		{ id: 'week', label: 'Week' },
 		{ id: 'month', label: 'Month' }
 	];
@@ -33,6 +35,10 @@
 <style>
 	.switcher {
 		display: flex;
+		/* Six options no longer fit on one line beside the legend on a
+		   portrait panel, which is 1080px wide. Wrapping keeps every option
+		   reachable rather than letting the row overflow off-screen. */
+		flex-wrap: wrap;
 		gap: 0.25rem;
 		padding: 0.25rem;
 		border-radius: 999px;
@@ -43,7 +49,10 @@
 		/* 48px: the smallest target that stays reliable for a fingertip on a
 		   wall panel, where you are often reaching rather than aiming. */
 		min-height: 48px;
-		padding: 0 1.25rem;
+		/* Trimmed from 1.25rem when the lookaheads took the count from four
+		   options to six; 48px of height is what actually makes a target
+		   reliable for a fingertip, and that is untouched. */
+		padding: 0 1rem;
 		border: none;
 		border-radius: 999px;
 		background: transparent;

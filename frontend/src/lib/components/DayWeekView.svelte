@@ -7,12 +7,23 @@
 		today = null,
 		now = null
 	}: { days: CalendarDay[]; today?: string | null; now?: string | null } = $props();
+
+	// One column per day, taken from the data rather than from the view name,
+	// so day (1), the lookaheads (3 and 5) and week (7) all render through the
+	// same path. Floored at 1: repeat(0, ...) is invalid CSS and would drop
+	// the whole grid.
+	let columns = $derived(Math.max(1, days.length));
+
+	// Four or more columns stop being legible once the panel is portrait or
+	// the window is narrow, so those stack. Three still fit across 1080px -
+	// and a 3-day lookahead side by side is the whole point of the view.
+	let stacksWhenNarrow = $derived(columns > 3);
 </script>
 
 <!-- Day columns rather than a scrolling hour grid. From across a kitchen the
      question is "what is on today", not "where exactly does 2pm sit", and this
-     keeps one rendering path for day, week, and month. -->
-<div class="columns" class:single={days.length === 1}>
+     keeps one rendering path for day, the lookaheads, week, and month. -->
+<div class="columns" class:stacks={stacksWhenNarrow} style:--columns={columns}>
 	{#each days as day (day.date)}
 		<section class:today={day.is_today} class:past={today !== null && day.date < today}>
 			<h3>
@@ -57,12 +68,8 @@
 <style>
 	.columns {
 		display: grid;
-		grid-template-columns: repeat(7, minmax(0, 1fr));
+		grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
 		gap: 0.5rem;
-	}
-
-	.single {
-		grid-template-columns: minmax(0, 1fr);
 	}
 
 	section {
@@ -199,14 +206,29 @@
 	/* One column per day stops working long before a phone-sized screen, and
 	   it never works in portrait: the wall panel is 1080px wide that way up,
 	   which is wider than this breakpoint, so seven columns would survive at
-	   ~150px each. Orientation is checked as well as width for that reason. */
+	   ~150px each. Orientation is checked as well as width for that reason.
+
+	   Only the wide views collapse here. A 3-day lookahead gets ~350px per
+	   column at that width, which is comfortable, and stacking it would throw
+	   away the side-by-side comparison the view exists for. */
 	@media (max-width: 60rem), (orientation: portrait) {
-		.columns {
+		.columns.stacks {
 			grid-template-columns: minmax(0, 1fr);
 		}
 
 		/* Stacked days only need to be as tall as their contents; the fixed
 		   minimum exists to keep side-by-side columns even. */
+		.columns.stacks section {
+			min-height: 0;
+		}
+	}
+
+	/* Phone width, where even three columns are unreadable. */
+	@media (max-width: 40rem) {
+		.columns {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
 		section {
 			min-height: 0;
 		}

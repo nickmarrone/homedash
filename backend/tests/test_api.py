@@ -4,7 +4,7 @@ Constructed without the lifespan, so no migrations run, no scheduler starts
 and no weather is fetched - the session fixture supplies the schema.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -155,6 +155,48 @@ class TestContent:
         assert set(agenda[0]) <= set(grid_item)
         for key in agenda[0]:
             assert agenda[0][key] == grid_item[key]
+
+
+class TestLookaheadViews:
+    """The 3- and 5-day views, over the real endpoint.
+
+    The contract that matters on the wall: with no anchor they begin on
+    today, whatever day of the week that is.
+    """
+
+    @pytest.mark.parametrize("view,length", [("next3", 3), ("next5", 5)])
+    def test_defaults_to_a_window_starting_today(self, client, view, length):
+        payload = client.get(f"/api/calendar?view={view}").json()
+
+        assert payload["anchor"] == payload["today"]
+        assert len(payload["days"]) == length
+        assert payload["days"][0]["date"] == payload["today"]
+        assert payload["days"][0]["is_today"] is True
+        # Nothing before today is in the window, so nothing is dimmed as
+        # padding the way a month grid's leading days are.
+        assert all(day["in_period"] for day in payload["days"])
+
+    @pytest.mark.parametrize("view,length", [("next3", 3), ("next5", 5)])
+    def test_an_explicit_anchor_is_the_first_day(self, client, view, length):
+        """A Sunday anchor, which a week view would snap backwards."""
+        payload = client.get(f"/api/calendar?view={view}&anchor=2026-08-23").json()
+
+        assert payload["days"][0]["date"] == "2026-08-23"
+        assert payload["next_anchor"] == (
+            date(2026, 8, 23) + timedelta(days=length)
+        ).isoformat()
+
+    def test_events_land_in_the_window(self, client, session, calendar):
+        add_instance(session, calendar, datetime(2026, 8, 20, 16, 0), datetime(2026, 8, 20, 17, 0))
+        payload = client.get("/api/calendar?view=next3&anchor=2026-08-19").json()
+
+        assert [d["date"] for d in payload["days"] if d["items"]] == ["2026-08-20"]
+
+    def test_an_event_after_the_window_is_excluded(self, client, session, calendar):
+        add_instance(session, calendar, datetime(2026, 8, 22, 16, 0), datetime(2026, 8, 22, 17, 0))
+        payload = client.get("/api/calendar?view=next3&anchor=2026-08-19").json()
+
+        assert [d["date"] for d in payload["days"] if d["items"]] == []
 
 
 class TestWeekStart:

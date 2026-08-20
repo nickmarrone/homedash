@@ -9,8 +9,9 @@
 > One item is still open on hardware — which mechanism actually blanks the monitor (see
 > Phase 3) — but it is no longer blocking: the panel goes dark either way.
 >
-> Everything below Phase 4 is post-v1. The obvious next step is the Immich photo source,
-> which the `PhotoSource` protocol already has a seam for.
+> Everything below Phase 4 is post-v1; what has landed there is recorded under "Landed
+> after v1". The obvious next step is the Immich photo source, which the `PhotoSource`
+> protocol already has a seam for.
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -460,6 +461,39 @@ The panel drifts into a photo slideshow when nobody's using it, and a tap brings
 - Verified in real Chrome at both 1920x1080 and 1080x1920 via the headless panel harness —
   which is the only thing that catches a client-render failure, since the backend suite stays
   green while the display is blank.
+
+---
+
+## Landed after v1
+
+Small changes that are neither a phase nor a future feature. Recorded here so the
+running narrative stays honest about what the panel actually does.
+
+### The week starts on Monday (2026-08-20)
+
+`HOMEDASH_WEEK_STARTS_ON` had shipped with Phase 2 and already ran end to end; only the
+default moved, from `sunday` to `monday`. `MonthGrid.svelte` takes its column headers from
+the API response rather than hardcoding them, so the frontend needed no change at all.
+
+### 3- and 5-day lookaheads (2026-08-20)
+
+Two views between Day and Week: `next3` and `next5`, labelled **3 Day** and **5 Day**.
+
+- **They are not snapped to a week.** That is the whole feature. `week` normalises its
+  anchor to the week start; a lookahead keeps whatever date it is pointed at, which with
+  no anchor is today. A snapped 3-day view opened on a Sunday would be two-thirds history.
+- **They cost almost nothing** because every view was already the same response shape — a
+  list of day buckets. `grid.LOOKAHEAD_DAYS` plus three branches in `period_bounds`,
+  `step_anchor` and `normalize_anchor` is the entire backend.
+- **`DayWeekView` now takes its column count from `days.length`** rather than a hardcoded
+  7 with a `.single` special case for day view. One expression covers 1, 3, 5 and 7.
+- **Only the wide views stack in portrait.** Week and 5 Day collapse to one day per row on
+  a 1080px-wide panel; Day and 3 Day keep their columns, since three fit at ~350px each and
+  the side-by-side comparison is what the view is for. A third breakpoint at 40rem stacks
+  everything, for a phone.
+- Paging steps a whole window, so `›` never re-shows a day just seen, and the existing
+  midnight rollover already resets the anchor — which is what keeps a lookahead left on the
+  wall meaning "from now".
 
 ---
 

@@ -7,7 +7,7 @@ See `CLAUDE.md` for the full phased implementation plan.
 ## Status
 
 **Phases 1 to 4 are done.** Real calendar sync from ICS, CalDAV, and Google Calendar;
-Open-Meteo weather; agenda, day, week, and month views; live updates over SSE — all served
+Open-Meteo weather; agenda, day, 3-day, 5-day, week, and month views; live updates over SSE — all served
 from one Docker image — plus a locked-down Raspberry Pi wall panel with a screen schedule,
 and a family-photo screensaver when nobody is using it.
 
@@ -135,15 +135,21 @@ offending character.
 
 ## Using the panel
 
-**Switching views.** The switcher at the top offers Agenda, Day, Week, and Month. The panel
-remembers which one you left it on and comes back to it after a reboot.
+**Switching views.** The switcher at the top offers Agenda, Day, 3 Day, 5 Day, Week, and
+Month. The panel remembers which one you left it on and comes back to it after a reboot.
 
 - **Agenda** — a flat chronological list of everything coming up. Easiest to read at a glance.
 - **Day / Week** — one column per day, events listed inside it.
+- **3 Day / 5 Day** — a rolling lookahead: the next three or five days, *starting today*.
+  Unlike Week, these do not snap to a week boundary, so they never open on days already
+  over — on a Friday, 3 Day shows Friday, Saturday and Sunday rather than most of a week
+  that has been and gone.
 - **Month** — the full grid. Each cell shows up to three events, then a "+N more" count.
 
-**Navigating.** `‹` and `›` move one day, week, or month; **Today** jumps back to now. Today's
-cell is outlined in every view.
+**Navigating.** `‹` and `›` move one whole period — a day, a lookahead window, a week, or a
+month — so paging never re-shows a day you just looked at. **Today** jumps back to now, and
+today's cell is outlined in every view. At midnight the panel snaps back to today on its own,
+so a lookahead left on the wall always means "from now".
 
 **Hiding a calendar.** Tap its chip in the legend. Its events disappear from *all* views and
 the chip dims with an empty checkbox, so it can always be tapped back on. This is stored per
@@ -154,8 +160,10 @@ events render as solid banners and sort above timed events within a day. An even
 several days appears on each of them.
 
 **Either way up.** Mounted in portrait, the panel stacks the agenda underneath the calendar
-and gives the week view one column per day instead of seven side by side. This follows the
-physical rotation with no setting to change.
+and stacks the wider views — Week and 5 Day — one day per row instead of side by side. Day
+and 3 Day keep their columns: three fit comfortably across 1080px, and seeing them beside
+each other is the point of the view. This follows the physical rotation with no setting to
+change.
 
 **Updating.** The panel never needs a manual refresh. The backend pushes changes over SSE as
 soon as a sync notices them. A heartbeat every 30 seconds carries the server's date, so the

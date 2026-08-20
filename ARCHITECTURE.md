@@ -59,7 +59,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `google_source.py` | Google Calendar `events.list` with `syncToken` |
 | `google_auth.py` | OAuth refresh-token credentials |
 | `sync.py` | `seed_calendars_from_settings`, `build_adapter`, `sync_source`, `sync_window` |
-| `grid.py` | Day/week/month bucketing, anchors, period titles |
+| `grid.py` | Day/lookahead/week/month bucketing, anchors, period titles |
 | `localtime.py` | `to_local` / `as_utc`, all-day floating-datetime handling |
 | `colors.py` | Fixed `PALETTE`, `color_for_index` |
 | `providers.py` | Provider detection for the inspect CLI |
@@ -209,13 +209,21 @@ No DB-level cascades either; child rows are deleted by hand in the reconcilers.
 indexed table covering roughly a month back and a year forward. The panel never triggers
 an RRULE expansion, and month view is a single indexed range query.
 
+**Views are day buckets at different widths.** `day`, `next3`, `next5`, `week` and `month`
+all return the same array shape, which is why the lookaheads cost a row in
+`grid.LOOKAHEAD_DAYS` and three branches rather than a rendering path. The one thing that
+separates them is where the window starts: `week` and `month` snap their anchor to a period
+boundary, and `next3`/`next5` deliberately do not. A lookahead snapped to a week start would
+be mostly in the past — on a Sunday, a snapped three-day view is two days already over — and
+"the next few days" is the entire question those views answer.
+
 ### API surface — `api/routes.py`
 
 | Endpoint | Returns |
 |---|---|
 | `GET /healthz` | Liveness |
 | `GET /api/agenda` | Flat chronological events, each with its `calendar: {id, name, color}` |
-| `GET /api/calendar?view=day\|week\|month&anchor=` | Server-bucketed grid, plus title and prev/next anchors |
+| `GET /api/calendar?view=day\|next3\|next5\|week\|month&anchor=` | Server-bucketed grid, plus title and prev/next anchors |
 | `GET /api/calendars` | The legend — every enabled source, so empty calendars still appear |
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
 | `GET /api/photos?orientation=landscape\|portrait` | Screensaver playlist: each photo's slot, size, and hashed URL |
@@ -343,7 +351,7 @@ plugin options.
 
 ### Routes
 
-**One route, `/`.** The four views are a `view` state variable on `+page.svelte`, not
+**One route, `/`.** The six views are a `view` state variable on `+page.svelte`, not
 separate routes. `+layout.ts` is two lines: `prerender = true`, `ssr = false` — all data
 comes from client-side fetch and SSE against the running backend, so there is nothing to
 render at build time.
@@ -379,11 +387,11 @@ single-calendar panel, where the legend renders nothing at all.
 |---|---|
 | `AgendaList.svelte` | Events grouped by day; always injects a "Today" group so the panel is never blank |
 | `CalendarLegend.svelte` | Tap-to-hide calendar chips; renders only when there's more than one calendar |
-| `DayWeekView.svelte` | Day/week as columns; collapses to one column when narrow *or* portrait |
+| `DayWeekView.svelte` | Day, lookaheads and week as columns; column count comes from `days.length` |
 | `MonthGrid.svelte` | 7-column grid, 3 chips per cell then "+N more" |
 | `HourlyForecast.svelte` | 12-hour temperature and rain strip, one SVG in column units |
 | `PeriodNav.svelte` | ‹ / title / Today / › |
-| `ViewSwitcher.svelte` | Agenda / Day / Week / Month segmented control |
+| `ViewSwitcher.svelte` | Agenda / Day / 3 Day / 5 Day / Week / Month segmented control |
 | `WeatherWidget.svelte` | Current conditions, H/L, sunrise/sunset, AQI, and the moon |
 | `SkyEvents.svelte` | One-line strip: the next three sky events, comets first |
 | `MoonGlyph.svelte` | The lunar disc as inline SVG, drawn from the real illuminated fraction |
