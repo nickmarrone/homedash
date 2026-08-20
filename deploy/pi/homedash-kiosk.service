@@ -1,3 +1,6 @@
+# Console-only images (Raspberry Pi OS Lite, Ubuntu Server): HomeDash starts
+# its own compositor on tty1. On a desktop image use homedash-kiosk.user.service
+# instead - this unit would fight GDM for the seat and restart forever.
 [Unit]
 Description=HomeDash wall panel (labwc + Chromium kiosk)
 After=network-online.target systemd-user-sessions.service
@@ -29,5 +32,8 @@ ExecStart=/usr/bin/labwc -s /usr/local/bin/homedash-kiosk-start
 Restart=always
 RestartSec=5
 
+# multi-user.target, not graphical.target: setup.sh sets the default target to
+# multi-user on this path, so a unit wanted by graphical.target would never be
+# reached and the panel would simply not come back after a reboot.
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

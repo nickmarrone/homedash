@@ -1,0 +1,22 @@
+# GNOME/GDM path. Installed to ~/.config/systemd/user/ by setup.sh and started
+# by the desktop session itself, which is why there is no PAMName, no TTYPath,
+# and no hand-set XDG_RUNTIME_DIR or WAYLAND_DISPLAY: the session already
+# supplies all of them. The system unit of the same name is for the opposite
+# case - a console-only image where HomeDash starts its own compositor.
+[Unit]
+Description=HomeDash wall panel (fullscreen browser)
+PartOf=graphical-session.target
+After=graphical-session.target
+# A browser that cannot start at all should stop being relaunched forever.
+# kiosk-start.sh backs off on its own; this is the outer bound.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/homedash-kiosk-start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

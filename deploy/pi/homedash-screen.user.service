@@ -1,0 +1,21 @@
+# GNOME/GDM path - see homedash-kiosk.user.service. Running the agent inside
+# the session is not just tidier: the `gnome` blanking mechanism talks to
+# org.gnome.ScreenSaver on the session bus, which only exists here.
+#
+# --dry-run until the panel's blanking mechanism is confirmed. Run
+#   homedash-screen-agent probe
+# on the Pi, see which one actually darkens the display, then drop --dry-run
+# and add --mechanism NAME here. See deploy/pi/README.md.
+[Unit]
+Description=HomeDash screen schedule agent
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/homedash-screen-agent run --server @SERVER_URL@ --dry-run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target
