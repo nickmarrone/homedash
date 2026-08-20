@@ -102,11 +102,13 @@ export interface MoonPhase {
 }
 
 export interface SkyEvent {
-	kind: 'moon' | 'meteor_shower' | 'season';
+	kind: 'moon' | 'meteor_shower' | 'season' | 'comet';
 	name: string;
 	/** Local calendar date, YYYY-MM-DD. */
 	date: string;
 	detail: string | null;
+	/** Comets only: predicted visual magnitude, lower being brighter. */
+	magnitude?: number;
 }
 
 /** Computed on the server from the configured coordinates, not fetched from

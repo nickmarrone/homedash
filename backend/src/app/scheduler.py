@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.db import engine
 from app.models import CalendarSource
 from app.sse import broadcaster
+from app.comets import refresh_comet_elements
 from app.weather.client import refresh_weather
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,23 @@ def run_heartbeat() -> None:
     broadcaster.publish("heartbeat", heartbeat_data())
 
 
+def run_comet_refresh() -> None:
+    """Pull the MPC's comet elements. Slow, remote, and entirely optional.
+
+    Once a day is generous: these are orbits, and a newly discovered comet
+    takes weeks to become worth looking at. A failure leaves the cached file
+    alone, so the panel keeps showing whatever it last knew rather than going
+    blank because a web server was busy.
+    """
+    if not settings.comets_enabled:
+        return
+    try:
+        if refresh_comet_elements():
+            broadcaster.publish("weather.updated")
+    except Exception:
+        logger.exception("Comet element refresh failed")
+
+
 def run_weather_refresh() -> None:
     try:
         if refresh_weather():
@@ -119,6 +137,14 @@ def start_scheduler() -> None:
         id="heartbeat",
         next_run_time=datetime.now(),
     )
+    if settings.comets_enabled:
+        scheduler.add_job(
+            run_comet_refresh,
+            "interval",
+            hours=settings.comet_refresh_hours,
+            id="comet_refresh",
+            next_run_time=datetime.now(),
+        )
     scheduler.add_job(
         run_weather_refresh,
         "interval",

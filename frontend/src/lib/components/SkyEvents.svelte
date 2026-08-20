@@ -14,7 +14,16 @@
 	// tomorrow.
 	const MAX_EVENTS = 3;
 
-	let shown = $derived(events.slice(0, MAX_EVENTS));
+	// A comet first, whatever the dates say. Everything else on this strip is
+	// a date in the diary; a visible comet is a thing in the sky tonight that
+	// may not be there next month, and it is the one item worth interrupting
+	// the chronological order for.
+	let ordered = $derived([
+		...events.filter((event) => event.kind === 'comet'),
+		...events.filter((event) => event.kind !== 'comet')
+	]);
+
+	let shown = $derived(ordered.slice(0, MAX_EVENTS));
 </script>
 
 <!-- Above the hourly strip rather than inside it: these are dated events, not
@@ -23,7 +32,11 @@
 {#if shown.length}
 	<div class="sky">
 		{#each shown as event (event.kind + event.date + event.name)}
-			<span class="event" class:soon={today !== null && event.date <= today}>
+			<span
+				class="event"
+				class:soon={today !== null && event.date <= today}
+				class:comet={event.kind === 'comet'}
+			>
 				{#if event.kind === 'moon' && moon}
 					<!-- The disc as it will actually look that night, not as it
 					     looks tonight: a "Full Moon" line under a drawing of a
@@ -62,9 +75,15 @@
 
 	/* Something happening tonight earns full weight - the whole point of the
 	   strip is that somebody looks up before it is over. */
-	.soon {
+	.soon,
+	.comet {
 		opacity: 1;
 		font-weight: 600;
+	}
+
+	/* A comet is rare enough that its detail is the headline, not an aside. */
+	.comet .detail {
+		opacity: 0.85;
 	}
 
 	.when {

@@ -22,6 +22,7 @@ tests pass an instant rather than patching time.
 """
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -254,11 +255,16 @@ def _ecliptic_to_equatorial(longitude: float, latitude: float) -> tuple[float, f
     return _norm(ra), dec
 
 
-def sun_equatorial(jd: float) -> tuple[float, float]:
-    """The Sun's right ascension and declination (Meeus ch. 25, low accuracy).
+def sun_ecliptic(jd: float) -> tuple[float, float]:
+    """The Sun's geocentric ecliptic longitude in degrees and its distance in AU.
 
-    Good to about 0.01 degrees, which is far better than deciding whether the
-    sky is dark needs.
+    Meeus ch. 25, low accuracy: about 0.01 degrees and a few parts in 100,000
+    of the distance. Both are far finer than anything downstream needs.
+
+    The distance is what makes this more than an internal detail. Seen from the
+    Sun, the Earth lies in the opposite direction at the same range, so this is
+    also Earth's own orbital position - which is exactly what turns a comet's
+    heliocentric orbit into something visible from a kitchen window.
     """
     n = jd - 2451545.0
     mean_longitude = _norm(280.460 + 0.9856474 * n)
@@ -266,7 +272,29 @@ def sun_equatorial(jd: float) -> tuple[float, float]:
     ecliptic_longitude = _norm(
         mean_longitude + 1.915 * _sin(anomaly) + 0.020 * _sin(2 * anomaly)
     )
-    return _ecliptic_to_equatorial(ecliptic_longitude, 0.0)
+    distance = 1.00014 - 0.01671 * _cos(anomaly) - 0.00014 * _cos(2 * anomaly)
+    return ecliptic_longitude, distance
+
+
+def earth_heliocentric(jd: float) -> tuple[float, float, float]:
+    """Earth's heliocentric ecliptic rectangular coordinates, in AU.
+
+    Earth sits opposite the Sun's apparent direction, at the same distance.
+    Its own ecliptic latitude is zero by definition of the plane.
+    """
+    longitude, distance = sun_ecliptic(jd)
+    return (-distance * _cos(longitude), -distance * _sin(longitude), 0.0)
+
+
+def ecliptic_to_equatorial(longitude: float, latitude: float) -> tuple[float, float]:
+    """Public form of the ecliptic-to-equatorial rotation."""
+    return _ecliptic_to_equatorial(longitude, latitude)
+
+
+def sun_equatorial(jd: float) -> tuple[float, float]:
+    """The Sun's right ascension and declination."""
+    longitude, _ = sun_ecliptic(jd)
+    return _ecliptic_to_equatorial(longitude, 0.0)
 
 
 def moon_equatorial(jd: float) -> tuple[float, float]:
@@ -400,9 +428,9 @@ _NIGHT_STEP = timedelta(minutes=15)
 
 @dataclass(frozen=True)
 class Viewing:
-    """When and how well a shower can actually be seen from one place."""
+    """When and how well something can actually be seen from one place."""
 
-    #: Local time the radiant is highest while the sky is dark.
+    #: Local time the target is highest while the sky is dark.
     best_at: datetime
     #: Its altitude then, in degrees.
     altitude: float
@@ -418,43 +446,54 @@ class Viewing:
         return self.moon_altitude > 0 and self.moon_illumination >= BRIGHT_MOON
 
 
-def shower_viewing(
-    shower: MeteorShower, peak: date, latitude: float, longitude: float, tz: ZoneInfo
+def best_dark_view(
+    position_at,
+    night: date,
+    latitude: float,
+    longitude: float,
+    tz: ZoneInfo,
 ) -> Viewing | None:
-    """The best moment to watch a shower from one place, or None if it never
-    rises far enough into a dark sky there.
+    """Walk one night and return the darkest-sky moment the target is highest.
 
     This is the whole reason the panel needs coordinates rather than a
-    calendar. A radiant that transits at noon is useless however high it
-    climbs, and the old "90 - |latitude - declination|" test could not see
-    that: it measured the best altitude over a whole day, including the half
-    of it spent in daylight.
+    calendar. Something that transits at noon is useless however high it
+    climbs, and the "90 - |latitude - declination|" shorthand cannot see that:
+    it measures the best altitude over a whole day, including the half of it
+    spent in daylight.
 
-    The night is walked from evening to the following dawn, keeping the
-    darkest-sky moment at which the radiant is highest.
+    `position_at` takes a Julian day and returns right ascension and
+    declination, so a fixed meteor radiant and a comet crawling across the sky
+    both go through here unchanged.
+
+    None means the sky never got dark that night - which is the honest answer
+    through an arctic summer, and one a latitude test cannot give.
     """
-    start = datetime(peak.year, peak.month, peak.day, 12, tzinfo=tz)
-    moment = start
-    end = start + timedelta(hours=24)
+    moment = datetime(night.year, night.month, night.day, 12, tzinfo=tz)
+    end = moment + timedelta(hours=24)
 
     best: Viewing | None = None
     while moment < end:
         jd = julian_day(moment)
-        sun_ra, sun_dec = sun_equatorial(jd)
-        if altitude_of(sun_ra, sun_dec, jd, latitude, longitude) <= DARK_SUN_ALTITUDE:
-            radiant = altitude_of(
-                shower.right_ascension, shower.declination, jd, latitude, longitude
-            )
-            if best is None or radiant > best.altitude:
-                moon_ra, moon_dec = moon_equatorial(jd)
+        if altitude_of(*sun_equatorial(jd), jd, latitude, longitude) <= DARK_SUN_ALTITUDE:
+            altitude = altitude_of(*position_at(jd), jd, latitude, longitude)
+            if best is None or altitude > best.altitude:
                 best = Viewing(
                     best_at=moment,
-                    altitude=radiant,
-                    moon_altitude=altitude_of(moon_ra, moon_dec, jd, latitude, longitude),
+                    altitude=altitude,
+                    moon_altitude=altitude_of(*moon_equatorial(jd), jd, latitude, longitude),
                     moon_illumination=moon_phase(moment, latitude)["illumination"],
                 )
         moment += _NIGHT_STEP
+    return best
 
+
+def shower_viewing(
+    shower: MeteorShower, peak: date, latitude: float, longitude: float, tz: ZoneInfo
+) -> Viewing | None:
+    """The best moment to watch a shower from one place, or None if its radiant
+    never rises far enough into a dark sky there."""
+    radiant = (shower.right_ascension, shower.declination)
+    best = best_dark_view(lambda _jd: radiant, peak, latitude, longitude, tz)
     if best is None or best.altitude < MIN_RADIANT_ALTITUDE:
         return None
     return best
@@ -552,9 +591,24 @@ def sky_events(
     return sorted(events, key=lambda event: event["date"])
 
 
-def astro_summary(moment: datetime, latitude: float, longitude: float, tz: ZoneInfo) -> dict:
-    """Everything the panel's sky strip needs, in one call."""
+def astro_summary(
+    moment: datetime,
+    latitude: float,
+    longitude: float,
+    tz: ZoneInfo,
+    extra_events: Sequence[dict] = (),
+) -> dict:
+    """Everything the panel's sky strip needs, in one call.
+
+    `extra_events` merges in anything this module cannot compute for itself -
+    in practice comets, which need orbital elements fetched from the Minor
+    Planet Center. Taking them as an argument is what keeps this module free
+    of I/O: `app.comets` imports from here, never the other way round.
+    """
     return {
         "moon": moon_phase(moment, latitude),
-        "events": sky_events(moment, latitude, longitude, tz),
+        "events": sorted(
+            [*sky_events(moment, latitude, longitude, tz), *extra_events],
+            key=lambda event: event["date"],
+        ),
     }

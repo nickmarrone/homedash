@@ -188,6 +188,18 @@ class Settings(BaseSettings):
     screen_schedule: Annotated[ScreenScheduleConfig, NoDecode] = ScreenScheduleConfig()
     device_name: str = "panel"
 
+    # Bright comets, from the Minor Planet Center. The one part of the sky
+    # that cannot be computed from first principles - a naked-eye comet is a
+    # discovery, not an annual event - so it is also the only thing here that
+    # reaches the network. Set comets_enabled to false to keep the panel
+    # entirely self-contained.
+    comets_enabled: bool = True
+    comet_refresh_hours: int = 24
+    # Six is roughly the naked-eye limit under a dark sky. Deliberately
+    # conservative: comet brightness forecasts routinely miss by magnitudes,
+    # so a generous limit fills the strip with comets nobody can find.
+    comet_magnitude_limit: float = 6.0
+
     weather_latitude: float = 0.0
     weather_longitude: float = 0.0
     weather_temperature_unit: Literal["fahrenheit", "celsius"] = "fahrenheit"

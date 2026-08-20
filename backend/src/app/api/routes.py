@@ -9,6 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.api.serializers import serialize_instance
 from app.astro import astro_summary
+from app.comets import load_comet_elements, visible_comets
 from app.calendars.grid import (
     VIEWS,
     GridItem,
@@ -216,13 +217,28 @@ def get_weather() -> dict:
     off the panel. It is a few dozen floating-point operations - cheaper than
     serializing the forecast it travels with.
     """
+    now = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.home_timezone)
+    comets = (
+        visible_comets(
+            load_comet_elements(),
+            now,
+            settings.weather_latitude,
+            settings.weather_longitude,
+            tz,
+            settings.comet_magnitude_limit,
+        )
+        if settings.comets_enabled
+        else []
+    )
     return {
         **(get_cached_weather() or {}),
         "astro": astro_summary(
-            datetime.now(timezone.utc),
+            now,
             settings.weather_latitude,
             settings.weather_longitude,
-            ZoneInfo(settings.home_timezone),
+            tz,
+            extra_events=comets,
         ),
     }
 

@@ -224,6 +224,35 @@ is what their radiant actually does. A bright moon is flagged only when it is *a
 horizon* at the best moment, which is the difference between a good night out and a wasted one.
 Seasons are named for your hemisphere and the moon is drawn lit on the correct side.
 
+### Comets
+
+A bright comet is the one thing here that cannot be computed from first principles. Meteor
+showers are annual clockwork and the Moon keeps its own schedule, but a naked-eye comet is a
+*discovery* — NEOWISE in 2020, Tsuchinshan-ATLAS in 2024. Neither existed in any table until it
+did. So this is the only part of HomeDash that reaches the network: it fetches orbital elements
+from the [Minor Planet Center](https://www.minorplanetcenter.net/) once a day, propagates each
+orbit, and lists anything predicted brighter than `HOMEDASH_COMET_MAGNITUDE_LIMIT` (6.0) that
+actually climbs into your dark sky:
+
+```
+C/2026 A1 (Testbright)  Tonight  mag 3.3, best 5:15am, 13° up
+```
+
+A comet takes the front of the strip regardless of date, because everything else there is a
+diary entry and a comet is a thing in the sky tonight that may be gone next month.
+
+**The magnitudes are the weak part, and deliberately so.** A comet's position is celestial
+mechanics; its brightness depends on how much ice is left and how it behaves near the Sun, and
+comets routinely miss their forecasts by magnitudes in both directions. The default cut-off is
+conservative for that reason — treat a listing as "worth a look", never a promise.
+
+Elements are cached on disk beside the database, so a failed refresh falls back to the last good
+copy rather than emptying the strip, and a response that parses to no orbits is refused rather
+than written over a good file. Set `HOMEDASH_COMETS_ENABLED=false` to keep the panel entirely
+self-contained and offline.
+
+### The showers
+
 The thirteen showers are the IMO visual working list — the ones a person can actually watch.
 The IAU catalogue holds hundreds more, but nearly all were found by radar or camera networks
 and produce a meteor an hour or less: real, and invisible.
@@ -255,6 +284,9 @@ list.
 | `HOMEDASH_WEATHER_LATITUDE` / `_LONGITUDE` | `0` | home coordinates |
 | `HOMEDASH_WEATHER_TEMPERATURE_UNIT` | `fahrenheit` | `fahrenheit` or `celsius` |
 | `HOMEDASH_WEATHER_CACHE_MINUTES` | `20` | weather refresh cadence |
+| `HOMEDASH_COMETS_ENABLED` | `true` | fetch comet orbits from the Minor Planet Center |
+| `HOMEDASH_COMET_REFRESH_HOURS` | `24` | how often to re-fetch those orbits |
+| `HOMEDASH_COMET_MAGNITUDE_LIMIT` | `6.0` | faintest comet worth listing |
 | `HOMEDASH_SCREEN_SCHEDULE` | `{"on": "06:30", "off": "21:30"}` | when the wall panel's screen is lit |
 | `HOMEDASH_DEVICE_NAME` | `panel` | name stored on the panel's `devices` row |
 
