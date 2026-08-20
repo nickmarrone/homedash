@@ -6,9 +6,10 @@ See `CLAUDE.md` for the full phased implementation plan.
 
 ## Status
 
-**Phases 1 to 3 are done.** Real calendar sync from ICS, CalDAV, and Google Calendar;
+**Phases 1 to 4 are done.** Real calendar sync from ICS, CalDAV, and Google Calendar;
 Open-Meteo weather; agenda, day, week, and month views; live updates over SSE — all served
-from one Docker image — plus a locked-down Raspberry Pi wall panel with a screen schedule.
+from one Docker image — plus a locked-down Raspberry Pi wall panel with a screen schedule,
+and a family-photo screensaver when nobody is using it.
 
 HomeDash is **read-only by design**. It never writes to your calendars. Edit events on your
 phone the way you already do, and they sync down to the panel.
@@ -263,6 +264,48 @@ a degree for positions — all far tighter than a date and a rounded altitude ne
 
 ---
 
+## The photo screensaver
+
+Leave the panel alone for a few minutes and it drifts into a slideshow of your own photos.
+Touch it anywhere and the calendar comes straight back.
+
+Point `HOMEDASH_PHOTOS_SOURCE` at a folder of photos and that is the whole setup. Compose
+mounts it **read-only** at `/photos`, so HomeDash can never delete a family photo. Fill it
+however you like — Syncthing, an SMB share, Nextcloud, or dragging files in once a quarter.
+Subfolders are searched too.
+
+There is no on/off switch. An empty or missing folder means the panel never drifts, and the
+screensaver never starts while `HOMEDASH_SCREEN_SCHEDULE` says the screen should be off.
+
+**How it handles orientation.** The panel is 1920x1080 and can be mounted either way up, so
+a photo either agrees with the way it is turned or it does not. Ones that agree fill the
+screen. Ones that do not are shown two at a time, side by side in landscape or stacked in
+portrait, so the screen is always full — a black bar down the side of a wall panel reads as
+a fault. Note that on a portrait panel it is the *landscape* photos that get paired.
+
+Photos are resized on the server, once, to exactly the size the panel will show them at. The
+Pi never decodes an original. JPEG, PNG, GIF, BMP, WebP and TIFF are indexed; HEIC is not,
+because decoding it needs an extra library. Anything Pillow cannot read is logged, skipped,
+and remembered so it is not retried on every scan. EXIF rotation is honoured, so photos
+straight off a phone come out upright.
+
+**How fast a new photo appears.** A filesystem watch normally picks one up within seconds.
+That watch sees nothing when the folder is filled from *another machine* over SMB or NFS —
+no local filesystem event is ever raised — so a full rescan also runs every
+`HOMEDASH_PHOTO_INDEX_INTERVAL_MINUTES`. If your photos arrive over a network share, that
+interval is the speed you will actually see.
+
+The resized copies live in their own Docker volume, separate from the database, because they
+are regenerable and a backup should not have to carry them. To force a clean re-render:
+
+```bash
+docker compose down
+docker volume rm homedash_homedash-photos
+docker compose up -d
+```
+
+---
+
 ## Configuration reference
 
 All configuration is via `HOMEDASH_*` environment variables read by
@@ -289,6 +332,13 @@ list.
 | `HOMEDASH_COMET_MAGNITUDE_LIMIT` | `6.0` | faintest comet worth listing |
 | `HOMEDASH_SCREEN_SCHEDULE` | `{"on": "06:30", "off": "21:30"}` | when the wall panel's screen is lit |
 | `HOMEDASH_DEVICE_NAME` | `panel` | name stored on the panel's `devices` row |
+| `HOMEDASH_PHOTOS_SOURCE` | `./photos` | host folder of photos, mounted read-only at `/photos` |
+| `HOMEDASH_PHOTOS_DIR` | `/photos` | the same folder as seen inside the container |
+| `HOMEDASH_PHOTO_CACHE_DIR` | `/app/backend/photo-cache` | where resized copies are cached |
+| `HOMEDASH_PHOTO_INDEX_INTERVAL_MINUTES` | `15` | full rescan cadence (the backstop for network shares) |
+| `HOMEDASH_PHOTO_MAX_COUNT` | `2000` | ceiling on photos handed to the panel |
+| `HOMEDASH_SCREENSAVER_IDLE_MINUTES` | `5` | untouched time before the slideshow starts |
+| `HOMEDASH_SCREENSAVER_DWELL_SECONDS` | `30` | how long each slide is held |
 
 `HOMEDASH_ICS_CALENDARS` still works as a deprecated alias for `HOMEDASH_CALENDARS`; it logs a
 warning at startup and its entries default to `kind: "ics"`.

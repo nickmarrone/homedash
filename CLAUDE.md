@@ -1,12 +1,16 @@
 # HomeDash — Implementation Plan
 
-> **Status: Phases 1, 2 and 3 are complete.** Backend (FastAPI/SQLModel/Alembic/APScheduler),
+> **Status: Phases 1 to 4 are complete.** Backend (FastAPI/SQLModel/Alembic/APScheduler),
 > ICS + CalDAV + Google Calendar adapters, Open-Meteo weather, SSE, agenda/day/week/month
 > views, a backend test suite, and Docker packaging are all in place, as is the Raspberry Pi
 > wall panel: `deploy/pi/` provisions the kiosk, the `devices` table carries the screen
-> schedule, and the panel is laid out for both orientations. One item is deliberately left
-> open on hardware — which mechanism actually blanks the monitor (see Phase 3). Next up is
-> Phase 4 (the screensaver).
+> schedule, and the panel is laid out for both orientations. Phase 4 added the photo
+> screensaver, and with it the black-page fallback for a screen that will not blank itself.
+> One item is still open on hardware — which mechanism actually blanks the monitor (see
+> Phase 3) — but it is no longer blocking: the panel goes dark either way.
+>
+> Everything below Phase 4 is post-v1. The obvious next step is the Immich photo source,
+> which the `PhotoSource` protocol already has a seam for.
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -376,7 +380,56 @@ confirmed on the hardware — run `homedash-screen-agent probe` and drop `--dry-
 
 ### Done when
 
-The panel drifts into a photo slideshow when nobody's using it, and a tap brings the calendar straight back.
+The panel drifts into a photo slideshow when nobody's using it, and a tap brings the calendar straight back. *(Done.)*
+
+### What actually landed
+
+- `app/photos/` mirrors `app/calendars/`: `base.py` holds the `PhotoSource` protocol,
+  `folder.py` walks the directory, `derivatives.py` is the only module that touches Pillow,
+  `index.py` reconciles, `observer.py` watches. The reconciler follows the same contract the
+  calendar and device seeders do — the source is the truth, and anything it stops offering is
+  deleted, because a photo pulled out of the folder must stop appearing on the wall.
+- **Two derivatives per photo, not four.** For a given panel orientation a photo either
+  agrees with it and fills the screen, or disagrees and takes half of it to be paired. It
+  cannot be both, so 1920x1080 + 1080x960 for a landscape photo, and 1080x1920 + 960x1080 for
+  a portrait one. The plan's warning about portrait panels held up in testing: on a portrait
+  panel it really is the *landscape* photos that pair.
+- **`exif_transpose` before anything else.** Phones store orientation as a tag rather than
+  rotating pixels. Skipping it would not merely show photos sideways — it would measure them
+  along the wrong axis, hand them the wrong slot, and crop them accordingly.
+- **`size` and `mtime_ns` on the row**, so a rescan never reopens an unchanged file. This is
+  the only part of indexing that would actually cost something, since it runs forever on a
+  folder that changes a few times a year.
+- **An undecodable file still gets a row**, holding the error. Without one there is nothing
+  to remember it by and it would be reopened and fail on every scan. Rows with an error are
+  excluded from the playlist.
+- **Orphaned derivatives go in a sweep**, not by unlinking next to each deleted row: two
+  copies of one photo hash identically and share their files, so per-row unlinking would
+  blank the copy that is still there.
+- **The `watchdog` observer is the fast path, not the correct one.** inotify sees nothing
+  when the folder is filled from the far side of an SMB or NFS mount, which is a very common
+  way to run this, so the scheduled rescan is what actually guarantees the photo appears.
+  Events are debounced, because a sync tool fires hundreds of them for one batch.
+- **The server owns the catalogue; the panel owns the slideshow.** `/api/photos` returns what
+  exists and how big it is, and the browser shuffles, pairs, and times. That keeps the server
+  stateless per panel and puts the state where every other panel-local preference already is.
+- **Image URLs carry the content hash**, so the response can be `immutable`. On a slideshow
+  that loops for months, the alternative is re-fetching the whole library on every pass. The
+  hash is not validated on the way in — it exists to change the URL, and rejecting a stale one
+  would turn a slightly old playlist into visible gaps.
+- **Screen state rides the heartbeat** rather than the browser polling
+  `/api/devices/1/screen`, which writes `last_seen` as a side effect — that field means "the
+  screen agent is alive", and a second writer would blur it. Both paths call the same
+  `screen_state()`, so the browser and the Pi cannot disagree about bedtime.
+- **The black-page fallback shipped too** (`PanelBlank.svelte`), which the plan had left as a
+  Phase 3 hardware contingency. It is the same overlay machinery, and it means the panel goes
+  dark at bedtime whether or not `wlopm` turns out to work on this monitor.
+- Two frontend modules are deliberately plain `.ts`, not `.svelte.ts`: `idle.ts` and
+  `slideshow.ts` hold no reactive state, and a rune in a plain `.ts` file type-checks
+  cleanly and then blanks the panel at runtime.
+- Verified in real Chrome at both 1920x1080 and 1080x1920 via the headless panel harness —
+  which is the only thing that catches a client-render failure, since the backend suite stays
+  green while the display is blank.
 
 ---
 
