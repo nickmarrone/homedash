@@ -167,7 +167,7 @@ check-in, throttled to at most one write a minute. It is deliberately non-idempo
 |---|---|---|
 | `ics_sync` | `ics_poll_interval_minutes` (15) | `events.updated` if changed |
 | `fast_sync` | `fast_poll_interval_minutes` (1) | `events.updated` if changed |
-| `heartbeat` | 30 seconds | `heartbeat` with `{today, now}` |
+| `heartbeat` | 30 seconds | `heartbeat` with `{today, now, screen}` |
 | `photo_index` | `photo_index_interval_minutes` (15) | `photos.updated` if changed |
 | `weather_refresh` | `weather_cache_minutes` (20) | `weather.updated` if changed |
 
@@ -187,6 +187,12 @@ before `bind_loop`. No per-subscriber filtering and no replay — every panel ge
 event.
 
 Events: `events.updated`, `weather.updated`, `photos.updated`, `heartbeat`.
+
+It also carries `screen` — whether the schedule says the display should be lit — which the
+panel needs so the screensaver doesn't start at bedtime. It rides the heartbeat rather than
+the browser polling `/api/devices/1/screen`, because that endpoint writes `last_seen`, which
+means "the screen agent is alive"; a second client writing it would blur that. Both read the
+same `screen_state()`, so the browser and the agent cannot disagree.
 
 The heartbeat is a *named* event rather than sse-starlette's ping, because a ping is an SSE
 comment and `EventSource` never surfaces comments to `addEventListener` — so it could not

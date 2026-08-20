@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,7 +8,8 @@ from sqlmodel import Session, select
 from app.calendars.sync import sync_source
 from app.config import get_settings
 from app.db import engine
-from app.models import CalendarSource
+from app.devices import PANEL_DEVICE_ID, screen_state
+from app.models import CalendarSource, Device
 from app.photos.index import reindex
 from app.sse import broadcaster
 from app.comets import refresh_comet_elements
@@ -67,19 +68,43 @@ def run_fast_sync() -> None:
     sync_kinds(FAST_KINDS)
 
 
+def screen_status(session: Session) -> str:
+    """Whether the panel's screen should be lit, as "on" or "off".
+
+    Reuses the same screen_state the Pi's agent polls, so the browser and the
+    agent can never disagree about whether it is bedtime.
+    """
+    device = session.get(Device, PANEL_DEVICE_ID)
+    if device is None:
+        return "on"
+    now = datetime.now(timezone.utc)
+    return screen_state(device, now, ZoneInfo(settings.home_timezone))["state"]
+
+
 def heartbeat_data() -> dict:
-    """The server's date and clock, as the panel receives them.
+    """The server's date, clock, and screen state, as the panel receives them.
 
     Separate from the job that publishes it because the stream route sends one
     on connect too - a panel that has just loaded should not have to wait up
-    to a full interval to learn what time it is.
+    to a full interval to learn what time it is, or whether it is meant to be
+    dark.
     """
     now = datetime.now(ZoneInfo(settings.home_timezone))
-    return {"today": now.date().isoformat(), "now": now.isoformat()}
+    try:
+        with Session(engine) as session:
+            screen = screen_status(session)
+    except Exception:
+        # "on" is the fail-safe answer: a panel showing the calendar when it
+        # could have been dark is a much smaller problem than a panel that
+        # blacks itself out because a query failed.
+        logger.exception("Could not read the screen schedule for the heartbeat")
+        screen = "on"
+    return {"today": now.date().isoformat(), "now": now.isoformat(), "screen": screen}
 
 
 def run_heartbeat() -> None:
-    """Tell the panel the stream is alive, and what day it is.
+    """Tell the panel the stream is alive, what day it is, and whether it
+    should be showing anything at all.
 
     Carrying the date is what keeps an always-on panel from getting stuck on
     yesterday. events.updated only fires when a sync actually changes
@@ -87,6 +112,13 @@ def run_heartbeat() -> None:
     the "Today" heading would silently rot. Sending the server's date rather
     than letting the browser read its own clock keeps the panel's OS timezone
     out of it, the same way format.ts and /api/calendar already do.
+
+    The screen state rides along for the screensaver, which must not start
+    while the schedule says the display is meant to be dark. It goes here
+    rather than the browser polling /api/devices/1/screen because that endpoint
+    writes last_seen as a side effect, and last_seen means "the screen agent is
+    alive" - two different clients writing it would blur that. The heartbeat
+    already arrives on exactly the cadence the agent polls at.
     """
     broadcaster.publish("heartbeat", heartbeat_data())
 
