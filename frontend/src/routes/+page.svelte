@@ -27,6 +27,7 @@
 	import MonthGrid from '$lib/components/MonthGrid.svelte';
 	import SkyEvents from '$lib/components/SkyEvents.svelte';
 	import PeriodNav from '$lib/components/PeriodNav.svelte';
+	import PanelBlank from '$lib/components/PanelBlank.svelte';
 	import Screensaver from '$lib/components/Screensaver.svelte';
 	import ViewSwitcher from '$lib/components/ViewSwitcher.svelte';
 	import WeatherWidget from '$lib/components/WeatherWidget.svelte';
@@ -291,6 +292,10 @@
 
 {#if screensaverOn && playlist}
 	<Screensaver {playlist} onDismiss={dismissScreensaver} />
+{/if}
+
+{#if !screenOn}
+	<PanelBlank />
 {/if}
 
 <style>

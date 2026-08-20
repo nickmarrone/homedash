@@ -299,6 +299,7 @@ render at build time.
 | `ViewSwitcher.svelte` | Agenda / Day / Week / Month segmented control |
 | `WeatherWidget.svelte` | Current conditions, H/L, sunrise/sunset, AQI |
 | `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
+| `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
 
 ### Idioms
 
@@ -352,6 +353,24 @@ to 13 characters makes plain string comparison chronological, with no `Date` inv
 
 The one exception is `formatDayHeading`, which uses `Date` for "Today"/"Tomorrow" — and the
 authoritative date for that comes from the SSE heartbeat, not the browser.
+
+### The three panel states
+
+They are mutually exclusive and resolve in this order, all driven by the heartbeat's
+`screen` field and the idle timer:
+
+| Condition | Shows |
+|---|---|
+| `screen === 'off'` | `PanelBlank` — plain black, not dismissable |
+| screen on, idle ≥ `screensaver_idle_minutes`, photos exist | `Screensaver` |
+| otherwise | the calendar |
+
+`PanelBlank` is the fallback `deploy/pi/README.md` describes for a monitor that ignores
+output power management: the backlight stays on, so it is worse than a real blank, but the
+kitchen goes dark. It is deliberately not tap-to-dismiss — the screen is meant to be off.
+
+`screenOn` starts `true`, so a panel that has not had its first heartbeat shows the calendar
+rather than flashing black on every reload.
 
 ### The watchdog
 
