@@ -417,8 +417,9 @@ Theming is purely `color-scheme: light dark` — components use `currentColor`, 
 `inherit`, and low-alpha greys (`rgba(128,128,128,0.08–0.3)`) that read in both. Per-item
 color arrives as an inline custom property (`style:--item-color`) mixed with `color-mix`.
 
-**No emoji, anywhere.** Raspberry Pi OS Lite ships no emoji font, so on the actual wall
-panel every one renders as a tofu box. This is why the moon is drawn as inline SVG
+**No emoji, anywhere.** Raspberry Pi OS Lite ships no emoji font, so on that image every
+one renders as a tofu box on the actual wall panel. A desktop image does ship one — the
+rule stands anyway, because the panel has to survive either. This is why the moon is drawn as inline SVG
 (`MoonGlyph.svelte`) and `PHASE_NAMES` in `astro.py` carries names rather than glyphs — and
 it is a constraint on any future icon: text or inline SVG, never a character and never an
 icon font.
@@ -506,17 +507,39 @@ that is simply down would otherwise put the panel in a reload loop.
 
 | File | Role |
 |---|---|
-| `setup.sh` | Provisions a fresh Raspberry Pi OS Lite install; `@PLACEHOLDER@` tokens substituted by `sed` |
-| `kiosk-start.sh` | labwc startup command: rotates the output, then Chromium in a restart loop |
+| `setup.sh` | Provisions the Pi; detects the session, takes a mode; `@PLACEHOLDER@` tokens substituted by `sed` |
+| `kiosk-start.sh` | Browser in a restart loop, plus whatever the session needs first. Both sessions run it |
 | `screen_agent.py` | Polls `/api/devices/1/screen` and blanks/unblanks the display. Stdlib only |
-| `homedash-kiosk.service` | labwc + Chromium, `Restart=always` |
-| `homedash-screen.service` | The screen agent, `Restart=always` |
-| `chromium-policy.json` | Enterprise policy: `URLBlocklist: ["*"]` plus a single allowlist entry |
-| `README.md` | Rotation, touch mapping, the read-only overlay, blanking mechanisms |
+| `homedash-kiosk.user.service` | GNOME: bound to `graphical-session.target` |
+| `homedash-screen.user.service` | GNOME: the agent, in-session so it can reach the session bus |
+| `homedash-kiosk.service` | Console: labwc + Chromium, `Restart=always` |
+| `homedash-screen.service` | Console: the screen agent, `Restart=always` |
+| `chromium-policy.json` | `locked` mode only: `URLBlocklist: ["*"]` plus a single allowlist entry |
+| `README.md` | The two axes, recovery, rotation, touch mapping, the overlay, blanking |
 
-**Four layers of lockdown:** no desktop (Lite + console autologin + labwc), Chromium kiosk
-flags, the enterprise policy (the strongest layer, and the one most guides skip — even a
-successful escape from kiosk mode can't load anything else), and the app-level touch CSS.
+**Two axes, and neither is cosmetic.**
+
+*Session* is detected, not configured: `gnome` where a display manager already drives the
+screen, `console` where nothing does. Installing the console path onto a desktop image
+starts a second compositor that loses the seat to GDM every five seconds, and sets the
+default target to `multi-user` so the machine boots to a text console. Both units are
+`WantedBy` the target their own path actually reaches — `graphical-session.target` for the
+user units, `multi-user.target` for the system ones, which is what the console path boots
+into.
+
+*Mode* is `simple` (default) or `locked`. Lockdown is four layers when it is on: no desktop
+(console image + autologin + labwc), Chromium kiosk flags, the enterprise policy (the
+strongest layer, and the one most guides skip — even a successful escape from kiosk mode
+can't load anything else), and the app-level touch CSS. `simple` keeps only the last of
+those. It is the default because the policy layer applies to *every* Chromium on the
+machine, which makes a browser opened to debug something look broken for no visible reason.
+
+**A confined browser gets no profile directory.** Ubuntu's Chromium is a snap whose `home`
+interface allows non-hidden paths under `$HOME` and nothing else, so any `--user-data-dir`
+is refused and the process exits in milliseconds — which, on a restart loop, reads as a
+crash rather than a rejected flag. `setup.sh` resolves the browser once and records whether
+it is confined; `kiosk-start.sh` also backs off after five failures in a minute and logs the
+command line it tried, so the next one of these is diagnosable from the journal alone.
 
 **The Pi holds no configuration of its own.** The screen agent takes only CLI flags baked
 into its unit file; everything else comes from the server response, including how long to
@@ -536,12 +559,19 @@ re-doubt:
   registered"; retired in the move to Wayland/labwc. It is not a broken install.
 - `/sys/class/backlight/*/bl_power` — exists **only for the official DSI panel**, not for
   HDMI or USB-C.
-- `xset dpms force off` — X11 only; labwc is Wayland.
+- `xset dpms force off` — X11 only; both sessions here are Wayland.
+- `wlopm --off '*'` / `wlr-randr --output X --off` — speak wlr-output-power-management,
+  which **labwc implements and Mutter does not.** On a desktop image these are dead ends
+  however they are installed, which the `available()` check cannot see: a binary on `PATH`
+  says nothing about the protocol behind it.
 
-That leaves `wlopm --off '*'` or `wlr-randr --output X --off`, and `wlopm` is not packaged
-in every Debian release, so `setup.sh` installs whichever exists. Whether a *portable*
-monitor honours any of it is a separate question — `screen_agent.py probe` answers it on the
-hardware, and the agent ships in `--dry-run` until it has been run.
+So the mechanism follows the session: the wlroots pair under labwc, and
+`org.gnome.ScreenSaver` on the session bus under GNOME. That last one is the only mechanism
+whose availability check is exact — it asks the bus whether anything is listening — so it
+sorts first, and it is also why the screen agent runs as a *user* unit on a desktop image:
+outside the session there is no bus to ask. Whether a *portable* monitor honours any of it
+is a separate question — `screen_agent.py probe` answers it on the hardware, and the agent
+ships in `--dry-run` until it has been run.
 
 ---
 

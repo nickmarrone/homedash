@@ -351,11 +351,41 @@ Ship the agent as a systemd unit with `Restart=always`. Same for the browser.
 Layer 4 of the lockdown was already done: Phase 2's touch pass shipped the `contextmenu`
 suppressor, `user-select`, `touch-action`, and 48px targets. Only the watchdog was missing.
 
+### What the hardware then said about it (2026-08-20)
+
+The panel went onto **Ubuntu 26.04 Desktop**, not Raspberry Pi OS Lite, and provisioning it
+failed in three ways worth keeping:
+
+- **The kiosk unit never autostarted, on any image.** It was `WantedBy=graphical.target`
+  while `setup.sh` set the default target to `multi-user` — a target the script itself
+  guaranteed would never be reached. A bug in the repo, not a distro mismatch, and invisible
+  until a reboot.
+- **A desktop image cannot be provisioned as a console one.** Starting labwc on tty1 while
+  GDM holds the seat loses that fight every five seconds, and `set-default multi-user`
+  means the Pi comes up as a text console. `setup.sh` now detects the session and installs
+  either system units + labwc, or `graphical-session.target` user units on top of GNOME —
+  and repairs a machine an earlier run left console-only.
+- **Ubuntu's Chromium is a snap** whose `home` interface allows non-hidden paths under
+  `$HOME` and nothing else, so the throwaway `/tmp` profile was refused and the browser
+  exited at once. Behind a restart loop that is indistinguishable from a crash, which is why
+  the loop now backs off and prints the command line it tried.
+
+Lockdown became `--mode locked` rather than the only way in; **`--mode simple` is the
+default** — fullscreen, escapable, no enterprise policy. The policy layer applies to every
+Chromium on the machine, so leaving it on during setup makes a browser opened to check
+something look broken for no reason. Blanking split the same way as the session: Mutter
+implements none of the wlroots protocols, so GNOME gets `org.gnome.ScreenSaver` on the
+session bus, which is also why the screen agent must run as a user unit there.
+
+Still open: none of this has been run on the reinstalled Pi yet.
+
 ### Done when
 
 The Pi boots straight into HomeDash, a curious eight-year-old can't get out of it, and the
-screen turns itself off at bedtime. *(Done, except that the blanking mechanism must be
-confirmed on the hardware — run `homedash-screen-agent probe` and drop `--dry-run`.)*
+screen turns itself off at bedtime. *(Done in the repo; unverified on the hardware. Both
+remaining steps happen on the Pi: run `setup.sh` on the reinstalled image, then
+`homedash-screen-agent probe` and drop `--dry-run`. `--mode locked` is the eight-year-old
+half, and comes last.)*
 
 ---
 
