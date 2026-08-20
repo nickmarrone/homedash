@@ -10,6 +10,11 @@
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
+> **Looking for how the code is laid out?** See [`ARCHITECTURE.md`](ARCHITECTURE.md) — module
+> map, data model, API surface, and the conventions to follow. This file is the plan and the
+> running "what actually landed" narrative; that one is the map, and is kept current commit
+> by commit so a change can be planned without re-reading the codebase.
+
 ---
 
 ## Stack decisions
