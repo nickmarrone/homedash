@@ -162,6 +162,22 @@ class Settings(BaseSettings):
     ics_poll_interval_minutes: int = 15
     fast_poll_interval_minutes: int = 1
 
+    # How long a source may go without a full re-fetch and re-expansion,
+    # regardless of what its change detection says.
+    #
+    # This is the backstop for a whole class of bug: every kind decides "did
+    # anything change?" from a provider's own signal - an ETag, a sync token -
+    # and a signal that misses a change leaves the panel wrong with no way to
+    # notice. A deletion is the worst version, because the stale row is an
+    # appointment somebody has already cancelled. It is also the one a
+    # provider is most likely to under-report, since a deleted event is absent
+    # rather than different.
+    #
+    # An hour costs one extra fetch per calendar per hour and bounds how long
+    # any such miss can survive. It also keeps the rolling materialization
+    # window moving on a calendar nobody ever edits.
+    full_resync_interval_minutes: int = 60
+
     sync_window_past_days: int = 30
     sync_window_future_days: int = 365
 

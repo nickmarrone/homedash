@@ -94,10 +94,29 @@ class GoogleCalendarSource:
         was rejected and a full re-list is required."""
         # syncToken cannot be combined with timeMin/timeMax - the API rejects
         # the request outright. The window is reapplied by the full re-list
-        # this leads to, and sync.needs_full_resync forces one daily, which is
-        # what keeps a token issued against yesterday's window from pinning
-        # the horizon in place.
-        response = self._request({"syncToken": token, "maxResults": PAGE_SIZE})
+        # this leads to, and sync.needs_full_resync forces one periodically,
+        # which is what keeps a token issued against an older window from
+        # pinning the horizon in place.
+        #
+        # showDeleted must be set here, not just on the full list. It defaults
+        # to false, and a deleted event is reported as an ordinary event whose
+        # status is "cancelled" - so without it the probe for "did anything
+        # change?" sees an empty item list after a deletion and reports the
+        # calendar as unchanged. The event then survives on the panel until
+        # the next forced full resync, which is exactly the bug where an
+        # appointment cancelled on a phone stayed on the wall.
+        #
+        # singleEvents is sent for the same reason it is sent on the full
+        # list: the two requests describe the same view of the calendar, and a
+        # probe that disagrees with the list it gates is a trap for later.
+        response = self._request(
+            {
+                "syncToken": token,
+                "maxResults": PAGE_SIZE,
+                "singleEvents": "false",
+                "showDeleted": "true",
+            }
+        )
         if response.status_code == 410:
             # Documented: an expired sync token requires starting over. Routine
             # rather than exceptional - Google expires them on its own schedule.

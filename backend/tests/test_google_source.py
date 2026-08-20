@@ -237,6 +237,38 @@ class TestSyncToken:
         assert source.changed is True
         assert source.sync_state == "fresh"
 
+    def test_the_token_probe_asks_for_deletions(self):
+        """Otherwise a deleted event never registers as a change.
+
+        showDeleted defaults to false, and Google reports a deletion as an
+        ordinary event whose status is "cancelled" - so a probe without it
+        comes back with an empty item list and the calendar looks unchanged.
+        The appointment then stays on the wall until the next forced full
+        resync, which is how a cancelled event outlived being cancelled.
+        """
+        source = adapter([FakeResponse(payload={"items": []})], sync_state="tok-1")
+        source.fetch()
+
+        params = source.calls[0]
+        assert params["showDeleted"] == "true"
+        assert params["singleEvents"] == "false"
+
+    def test_a_deletion_reported_by_the_probe_triggers_a_relist(self):
+        """The end the probe exists for: a cancelled event must reach the
+        wholesale rebuild, which is what actually drops its rows."""
+        source = adapter(
+            [
+                FakeResponse(payload={"items": [{"id": "ev1", "status": "cancelled"}]}),
+                FakeResponse(payload={"items": [], "nextSyncToken": "tok-2"}),
+            ],
+            sync_state="tok-1",
+        )
+        vevents = source.fetch()
+
+        assert source.changed is True
+        assert vevents == []
+        assert "timeMin" in source.calls[1]
+
     def test_full_list_asks_for_masters_and_deletions(self):
         source = adapter([FakeResponse(payload={"items": [], "nextSyncToken": "t"})])
         source.fetch()

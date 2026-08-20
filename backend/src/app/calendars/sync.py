@@ -191,18 +191,25 @@ def build_adapter(source: CalendarSource) -> CalendarSourceProtocol:
 def needs_full_resync(source: CalendarSource, now: datetime) -> bool:
     """Whether this source must be re-expanded regardless of change detection.
 
-    Change detection answers "did the calendar move?", but the materialization
-    window also moves - it rolls forward a day at a time. A calendar that
-    genuinely never changes would otherwise never be re-expanded, and the far
-    end of its window would slowly empty out: recurring occurrences stop being
-    materialized, and events that were beyond the horizon never arrive.
+    Two jobs, and the second is why this runs hourly rather than daily.
 
-    Once a day is ample, since the window is measured in months.
+    The materialization window moves - it rolls forward a day at a time. A
+    calendar that genuinely never changes would otherwise never be
+    re-expanded, and the far end of its window would slowly empty out.
+
+    It is also the backstop for change detection being wrong. Every kind
+    decides "did anything change?" from a provider signal, and a signal that
+    misses a change leaves the panel showing something that is not true, with
+    nothing to notice it. Deletions are the case that actually bites - a
+    provider reports a deleted event by omitting it, which is far easier to
+    miss than a difference - and a stale row is an appointment somebody has
+    already cancelled. Daily was too generous a bound on that.
     """
     last = source.last_full_sync_at
     if last is None:
         return True
-    return as_utc(last).date() < now.date()
+    interval = timedelta(minutes=settings.full_resync_interval_minutes)
+    return now - as_utc(last) >= interval
 
 
 def sync_source(session: Session, source: CalendarSource) -> bool:

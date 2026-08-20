@@ -177,9 +177,12 @@ An unchanged calendar is cheap to poll: CalDAV uses an RFC 6578 sync-collection 
 Google a `syncToken`, so the common "nothing changed" answer costs one small request. A full
 re-fetch only happens when something actually moved.
 
-Every calendar is also fully re-expanded once a day regardless. The materialization window
-rolls forward, so a calendar nobody ever edits still needs rebuilding or its far edge slowly
-empties out.
+Every calendar is also fully re-fetched and re-expanded every
+`HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES` (60) regardless of what change detection says. That
+does two jobs. The materialization window rolls forward, so a calendar nobody ever edits still
+needs rebuilding or its far edge slowly empties out. And it is the only thing that corrects a
+provider signal that missed a change — which is the bound on how long a deleted event can
+survive on the wall if its calendar never reports the deletion.
 
 ---
 
@@ -210,6 +213,8 @@ list.
 | `HOMEDASH_WEEK_STARTS_ON` | `sunday` | first column of the week and month views |
 | `HOMEDASH_ICS_POLL_INTERVAL_MINUTES` | `15` | ICS poll cadence |
 | `HOMEDASH_FAST_POLL_INTERVAL_MINUTES` | `1` | CalDAV/Google poll cadence |
+| `HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES` | `60` | forced full re-fetch, whatever change detection says |
+| `HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES` | `60` | forced full re-fetch, whatever change detection says |
 | `HOMEDASH_SYNC_WINDOW_PAST_DAYS` | `30` | how far back instances are materialized |
 | `HOMEDASH_SYNC_WINDOW_FUTURE_DAYS` | `365` | how far forward |
 | `HOMEDASH_WEATHER_LATITUDE` / `_LONGITUDE` | `0` | home coordinates |
