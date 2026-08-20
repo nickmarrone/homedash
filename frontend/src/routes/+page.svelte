@@ -37,9 +37,12 @@
 	// arithmetic happens here.
 	let anchor = $state<string | null>(null);
 
-	// The server's date, from the heartbeat. The panel must never read its own
-	// clock for this - see format.ts for the same reasoning about times.
-	let serverToday: string | null = null;
+	// The server's date and instant, from the heartbeat. The panel must never
+	// read its own clock for either - see format.ts for the same reasoning
+	// about times. Both are $state because they are rendered from now: they
+	// decide which events are shown as already over.
+	let serverToday = $state<string | null>(null);
+	let serverNow = $state<string | null>(null);
 
 	// Rotating the panel changes what needs fetching, not just how it looks:
 	// portrait shows the agenda under the calendar, so it needs both.
@@ -123,6 +126,12 @@
 	}
 
 	function onHeartbeat(heartbeat: Heartbeat) {
+		// Every 30 seconds, which is the resolution at which an event stops
+		// being current. Assigned before the early return below: the date not
+		// having changed is the ordinary case, and it is exactly when the clock
+		// still needs to advance.
+		serverNow = heartbeat.now;
+
 		if (serverToday === heartbeat.today) return;
 		const rolledOver = serverToday !== null;
 		serverToday = heartbeat.today;
@@ -196,9 +205,9 @@
 			onToday={() => goTo(null)}
 		/>
 		{#if view === 'month'}
-			<MonthGrid days={visibleDays} />
+			<MonthGrid days={visibleDays} today={serverToday} now={serverNow} />
 		{:else}
-			<DayWeekView days={visibleDays} />
+			<DayWeekView days={visibleDays} today={serverToday} now={serverNow} />
 		{/if}
 		{#if isPortrait}
 			<section class="upcoming">

@@ -1,8 +1,12 @@
 <script lang="ts">
 	import type { CalendarDay } from '$lib/api';
-	import { formatTime } from '$lib/format';
+	import { formatTime, hasPassed } from '$lib/format';
 
-	let { days }: { days: CalendarDay[] } = $props();
+	let {
+		days,
+		today = null,
+		now = null
+	}: { days: CalendarDay[]; today?: string | null; now?: string | null } = $props();
 
 	// How many chips fit in a cell before the rest become a count. A wall panel
 	// is read at a glance, so an overflowing cell is worse than an honest
@@ -22,12 +26,18 @@
 	</div>
 	<div class="grid">
 		{#each days as day (day.date)}
-			<div class="cell" class:outside={!day.in_period} class:today={day.is_today}>
+			<div
+				class="cell"
+				class:outside={!day.in_period}
+				class:today={day.is_today}
+				class:past={today !== null && day.date < today}
+			>
 				<span class="daynum">{day.day_of_month}</span>
 				{#each day.items.slice(0, MAX_CHIPS) as item (item.id)}
 					<div
 						class="chip"
 						class:allday={item.all_day}
+						class:passed={hasPassed(day.date, item, today, now)}
 						style:--chip-color={item.calendar?.color ?? '#888'}
 					>
 						{#if !item.all_day}
@@ -79,8 +89,22 @@
 		opacity: 0.35;
 	}
 
+	/* Today has to be findable in a 42-cell grid from across the room, so it
+	   gets a heavier border and a lifted background rather than the hairline
+	   outline it had. Inset, because the cells are 2px apart and a 3px outline
+	   would otherwise read as belonging to the neighbouring day. */
 	.today {
-		outline: 2px solid currentColor;
+		outline: 3px solid currentColor;
+		outline-offset: -2px;
+		background: rgba(128, 128, 128, 0.2);
+	}
+
+	/* Days already gone. Kept legible - the month view is also how you check
+	   what happened - but clearly behind the rest of the month. Padding days
+	   are dimmed by .outside already; this must not stack with it into
+	   invisibility, so the two are the same order of magnitude. */
+	.past {
+		opacity: 0.55;
 	}
 
 	.daynum {
@@ -89,7 +113,13 @@
 		opacity: 0.75;
 	}
 
+	/* A filled pill, the way a phone calendar marks today. Grey rather than an
+	   inverted swatch so it holds up in both themes without a palette. */
 	.today .daynum {
+		align-self: flex-start;
+		padding: 0.05rem 0.45rem;
+		border-radius: 999px;
+		background: rgba(128, 128, 128, 0.45);
 		font-weight: 700;
 		opacity: 1;
 	}
@@ -115,6 +145,18 @@
 		background: var(--chip-color);
 		color: #fff;
 		border-left-color: transparent;
+	}
+
+	/* An event that has already finished. Struck through as well as faded:
+	   inside today's cell a fade alone is easy to mistake for one of the
+	   padding-day dims.
+
+	   Only in a day that is still current - a past cell is dimmed whole, and
+	   the two fades would multiply into something barely legible. */
+	.cell:not(.past) .passed {
+		opacity: 0.5;
+		text-decoration: line-through;
+		text-decoration-thickness: 1px;
 	}
 
 	.chiptime {

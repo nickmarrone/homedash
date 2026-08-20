@@ -29,6 +29,44 @@ export function formatDayHeading(dateKeyValue: string): string {
 	return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
+/**
+ * Whether an item rendered on `dayDate` is already over.
+ *
+ * Asked per rendered day rather than per item, which is what keeps it simple:
+ * the grid has already bucketed a multi-day event onto each day it touches, so
+ * there is no span arithmetic to redo here - and no chance of it drifting from
+ * `grid.local_dates_spanned`, which owns the awkward conventions (an all-day
+ * DTEND is exclusive, a timed event ending at midnight belongs to the day it
+ * started).
+ *
+ * `today` and `now` come from the SSE heartbeat, never from the panel's own
+ * clock - the same rule the rest of this module follows. Before the first
+ * heartbeat lands both are null and nothing is dimmed, because dimming a
+ * future event is a worse error than briefly failing to dim a past one.
+ *
+ * Comparing the ISO strings directly works because the backend emits both
+ * these timestamps and the heartbeat in the home timezone, so the wall-clock
+ * digits sort chronologically - see the note at the top of this file. The one
+ * seam is the hour either side of a DST change, where two instants on the same
+ * day carry different offsets; being an hour out on when an event greys is not
+ * worth a Date for.
+ */
+export function hasPassed(
+	dayDate: string,
+	item: { all_day: boolean; ends_at: string },
+	today: string | null,
+	now: string | null
+): boolean {
+	if (!today || !now) return false;
+	if (dayDate < today) return true;
+	if (dayDate > today) return false;
+	// An all-day event is today's all day, whatever the time is. Its ends_at
+	// cannot answer this: it is exclusive midnight when a DTEND was present and
+	// equal to its start when there was none.
+	if (item.all_day) return false;
+	return item.ends_at.slice(0, 19) <= now.slice(0, 19);
+}
+
 // Compact hour label for the hourly strip: "2 PM", "11 AM". Same wall-clock
 // digit parsing as formatTime - Open-Meteo hourly timestamps carry no offset
 // and are already local to the configured coordinates.

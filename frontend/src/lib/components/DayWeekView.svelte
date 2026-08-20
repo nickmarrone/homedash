@@ -1,8 +1,12 @@
 <script lang="ts">
 	import type { CalendarDay } from '$lib/api';
-	import { formatTime } from '$lib/format';
+	import { formatTime, hasPassed } from '$lib/format';
 
-	let { days }: { days: CalendarDay[] } = $props();
+	let {
+		days,
+		today = null,
+		now = null
+	}: { days: CalendarDay[]; today?: string | null; now?: string | null } = $props();
 </script>
 
 <!-- Day columns rather than a scrolling hour grid. From across a kitchen the
@@ -10,17 +14,23 @@
      keeps one rendering path for day, week, and month. -->
 <div class="columns" class:single={days.length === 1}>
 	{#each days as day (day.date)}
-		<section class:today={day.is_today}>
+		<section class:today={day.is_today} class:past={today !== null && day.date < today}>
 			<h3>
 				<span class="weekday">{day.weekday_short}</span>
 				<span class="daynum">{day.day_of_month}</span>
+				{#if day.is_today}
+					<span class="flag">Today</span>
+				{/if}
 			</h3>
 			{#if day.items.length === 0}
 				<p class="empty">Nothing scheduled.</p>
 			{:else}
 				<ul>
 					{#each day.items as item (item.id)}
-						<li style:--item-color={item.calendar?.color ?? '#888'}>
+						<li
+							style:--item-color={item.calendar?.color ?? '#888'}
+							class:passed={hasPassed(day.date, item, today, now)}
+						>
 							<span class="bar" aria-hidden="true"></span>
 							<span class="time">
 								{#if item.all_day}
@@ -62,8 +72,20 @@
 		min-height: 12rem;
 	}
 
+	/* Today has to win at a glance from across the room, so it is marked three
+	   ways rather than one: a heavier border, a lifted background, and the word
+	   itself. The outline is inset so a thicker line cannot spill into the
+	   2px column gap and look like it belongs to the neighbouring day. */
 	.today {
-		outline: 2px solid currentColor;
+		outline: 3px solid currentColor;
+		outline-offset: -2px;
+		background: rgba(128, 128, 128, 0.2);
+	}
+
+	/* A whole day that is over. Dimmer than a passed event inside today,
+	   because there is nothing left in it to read. */
+	.past {
+		opacity: 0.55;
 	}
 
 	h3 {
@@ -88,6 +110,37 @@
 
 	.today .daynum {
 		font-weight: 700;
+	}
+
+	.flag {
+		margin-left: auto;
+		padding: 0.05rem 0.4rem;
+		border-radius: 999px;
+		background: rgba(128, 128, 128, 0.45);
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	/* An event that has already finished. Kept on screen rather than hidden -
+	   "what happened today" is half of what a family reads off the wall in the
+	   evening - but pushed behind everything still to come. The colour bar
+	   fades with it, or a finished event would still carry the loudest mark in
+	   the column.
+
+	   Only inside a day that is still current. A whole past day is already
+	   dimmed as a column, and the two fades would multiply into something
+	   barely visible; striking through every event of every past day would
+	   also be noise, since the column heading already says it is over. */
+	section:not(.past) .passed {
+		opacity: 0.45;
+	}
+
+	section:not(.past) .passed .title {
+		font-weight: 500;
+		text-decoration: line-through;
+		text-decoration-thickness: 1px;
 	}
 
 	.empty {
