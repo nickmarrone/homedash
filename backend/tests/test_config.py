@@ -112,3 +112,24 @@ class TestCredentialLookup:
     def test_ics_needs_no_credentials(self):
         s = settings(calendars='[{"name": "Family", "url": "https://example.com/a.ics"}]')
         assert s.credentials_for(s.calendars[0]) == {}
+
+
+class TestWeekStartSetting:
+    """The week/month grids start on Monday unless told otherwise."""
+
+    def test_defaults_to_monday(self, monkeypatch):
+        monkeypatch.delenv("HOMEDASH_WEEK_STARTS_ON", raising=False)
+        assert settings().week_starts_on == "monday"
+
+    def test_sunday_is_accepted(self):
+        assert settings(week_starts_on="sunday").week_starts_on == "sunday"
+
+    def test_read_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("HOMEDASH_WEEK_STARTS_ON", "sunday")
+        assert settings().week_starts_on == "sunday"
+
+    def test_anything_else_is_rejected_at_startup(self):
+        # A typo here would otherwise silently pick a week start rather than
+        # failing, and a wall panel off by a day is hard to spot.
+        with pytest.raises(ValidationError):
+            settings(week_starts_on="tuesday")

@@ -181,7 +181,10 @@ class Settings(BaseSettings):
     sync_window_past_days: int = 30
     sync_window_future_days: int = 365
 
-    week_starts_on: Literal["sunday", "monday"] = "sunday"
+    # Which column the week and month grids start on. Monday by default:
+    # it keeps the weekend as one adjacent pair at the end of the row,
+    # which is how a family reads "the weekend" off a wall panel.
+    week_starts_on: Literal["sunday", "monday"] = "monday"
 
     # The wall panel's screen schedule, seeded onto the devices row at
     # startup the same way calendars are. See ScreenScheduleConfig.

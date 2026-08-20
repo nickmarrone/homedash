@@ -324,7 +324,7 @@ list.
 | `HOMEDASH_HOME_TIMEZONE` | `UTC` | IANA zone the panel displays times in |
 | `HOMEDASH_CALENDARS` | `[]` | the calendar list (see above) |
 | `HOMEDASH_CALENDAR_CREDENTIALS` | `{}` | secrets, keyed by name |
-| `HOMEDASH_WEEK_STARTS_ON` | `sunday` | first column of the week and month views |
+| `HOMEDASH_WEEK_STARTS_ON` | `monday` | first column of the week and month views: `monday` or `sunday` |
 | `HOMEDASH_ICS_POLL_INTERVAL_MINUTES` | `15` | ICS poll cadence |
 | `HOMEDASH_FAST_POLL_INTERVAL_MINUTES` | `1` | CalDAV/Google poll cadence |
 | `HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES` | `60` | forced full re-fetch, whatever change detection says |
