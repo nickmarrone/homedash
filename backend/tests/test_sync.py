@@ -288,3 +288,48 @@ class TestAdapterDispatch:
             sync_module.build_adapter(
                 self._source(kind="google", calendar_id="x@group.calendar.google.com", credentials_ref="g")
             )
+
+
+class TestOrphanSweep:
+    """Startup is the only moment a source row is ever deleted, so it is the
+    only moment a row can be left without a parent - and an orphan is
+    permanent, because every deletion in sync.py is scoped by source_id and
+    the panel's queries join outwards on purpose."""
+
+    def test_reconciling_sweeps_rows_whose_calendar_is_already_gone(
+        self, session, configure
+    ):
+        """The database of somebody who has upgraded through several
+        versions. A hand-deleted source row, or one dropped by a version that
+        did not cascade, leaves appointments no forced full resync can reach:
+        every deletion in sync.py starts from a source row, and this one has
+        none.
+        """
+        configure(("Family", "https://example.com/a.ics"), ("Nick", "https://example.com/b.ics"))
+        seed_calendars_from_settings(session)
+        family, nick = sources(session)
+        add_event(session, family)
+        add_event(session, nick)
+        # The source row alone, without its events - which is exactly the
+        # state that produces a ghost. Both calendars stay configured, so the
+        # reconciler recreates this one, and SQLite hands the new row a fresh
+        # id rather than the one the stranded events still point at.
+        session.delete(session.get(CalendarSource, family.id))
+        session.commit()
+
+        seed_calendars_from_settings(session)
+
+        assert sorted(s.name for s in sources(session)) == ["Family", "Nick"]
+        remaining = session.exec(select(Event)).all()
+        assert [e.source_id for e in remaining] == [nick.id]
+        assert len(session.exec(select(EventInstance)).all()) == 1
+
+    def test_a_configured_calendar_keeps_its_events(self, session, configure):
+        configure(("Family", "https://example.com/a.ics"))
+        seed_calendars_from_settings(session)
+        add_event(session, sources(session)[0])
+
+        seed_calendars_from_settings(session)
+
+        assert len(session.exec(select(Event)).all()) == 1
+        assert len(session.exec(select(EventInstance)).all()) == 1

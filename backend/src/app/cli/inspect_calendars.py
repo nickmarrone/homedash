@@ -12,8 +12,10 @@ feed to confirm it is reachable, and for unrecognised hosts checks whether
 /.well-known/caldav points at a CalDAV server.
 
 --state reports what each calendar has actually stored: event and instance
-counts, when it last synced, and the resume token it is holding. This is the
-mode to reach for when a configured calendar is showing nothing.
+counts, when it last synced, and the resume token it is holding. It also
+names any rows belonging to no calendar at all. This is the mode to reach for
+when a configured calendar is showing nothing - or when it is showing an
+appointment that was deleted at the source and refuses to go away.
 """
 
 import argparse
@@ -147,8 +149,43 @@ def _report_state() -> None:
                 return
             for source in sources:
                 _report_source(session, source, now)
+            _report_orphans(session)
     except Exception as exc:
         print(f"  Could not read the database: {type(exc).__name__}: {exc}")
+
+
+def _report_orphans(session: Session) -> None:
+    """Rows belonging to no calendar at all.
+
+    These are the only rows a sync cannot fix. Every deletion in
+    `calendars/sync.py` is scoped by `source_id`, so a row whose parent is
+    gone is invisible to the rebuild and to the hourly forced full resync -
+    but not to the panel, whose queries join outwards on purpose so that an
+    instance with a missing source still renders. That makes an orphan a
+    permanent ghost, and worth naming explicitly when somebody is staring at
+    an appointment they cancelled months ago.
+    """
+    events = session.exec(
+        select(Event).where(Event.source_id.not_in(select(CalendarSource.id)))
+    ).all()
+    # Two ways an instance is stranded: its event is gone, or its event's
+    # calendar is. Both render on the panel; neither can be synced away.
+    ghosts = list(
+        session.exec(
+            select(EventInstance).where(EventInstance.event_id.not_in(select(Event.id)))
+        ).all()
+    )
+    if events:
+        ghosts += session.exec(
+            select(EventInstance).where(EventInstance.event_id.in_([e.id for e in events]))
+        ).all()
+    if not events and not ghosts:
+        return
+    print(f"\n  !! orphaned rows: events={len(events)} instances={len(ghosts)}")
+    print("     These belong to a calendar that no longer exists, so no sync can")
+    print("     reach them - they are removed at startup by the reconciler's sweep.")
+    for instance in sorted(ghosts, key=lambda i: i.starts_at)[:10]:
+        print(f"       - {instance.starts_at} {instance.title!r}")
 
 
 def _report_source(session: Session, source: CalendarSource, now: datetime) -> None:

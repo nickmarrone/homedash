@@ -96,6 +96,14 @@ these — the row survives precisely *because* the rebuild ran:
   series by a `RECURRENCE-ID` override. `google_source.py` drops cancelled items before
   they reach here; this is what gives ICS and CalDAV the same guarantee. `TENTATIVE` is
   kept — an unconfirmed appointment is still an appointment.
+* **Orphaned rows.** Every deletion in `sync.py` is scoped by `source_id`, so a row whose
+  `calendar_sources` or `events` parent is gone is unreachable — the rebuild never looks at
+  it and a forced full resync is still only a rebuild of one source's rows. It is *not*
+  unreachable from the panel: `api/routes.py` joins outwards on purpose, so an instance
+  with a missing source renders uncolored rather than vanishing, which turns an orphan into
+  a permanent ghost. `sweep_orphaned_events()` runs from the reconciler at startup, which
+  is the only moment a source row is ever deleted. `homedash-inspect-calendars --state`
+  reports any that exist.
 
 ### `photos/`
 

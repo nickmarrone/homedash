@@ -37,6 +37,56 @@ def _delete_source_events(session: Session, source_id: int) -> None:
     session.flush()
 
 
+def sweep_orphaned_events(session: Session) -> int:
+    """Delete rows that no source-scoped rebuild can ever reach.
+
+    Every deletion in this module is scoped by `source_id`: a sync rebuilds
+    the rows belonging to the source it just fetched, and the reconciler
+    deletes a dropped calendar's rows by walking from its source row. A row
+    whose parent has gone is therefore unreachable - the rebuild never looks
+    at it, and the hourly forced full resync cannot clear it either, because
+    a full resync is still only a rebuild of one source's rows.
+
+    That would be harmless if such a row were invisible, but the panel queries
+    join *outwards* on purpose (see `api/routes.py`): an instance whose event
+    or source has gone missing still renders, uncolored, rather than silently
+    vanishing. So an orphan is a permanent ghost on the wall - an appointment
+    that was deleted at the source months ago and that nothing in the sync
+    path is able to notice.
+
+    Orphans should not arise from this module, but they are cheap to check
+    for and impossible to recover from without a sweep, and a database that
+    has been through several schema versions is not a clean room.
+
+    Returns the number of rows deleted.
+    """
+    orphan_events = session.exec(
+        select(Event).where(Event.source_id.not_in(select(CalendarSource.id)))
+    ).all()
+    for event in orphan_events:
+        session.delete(event)
+    # Flush before looking for orphaned instances, so the events just deleted
+    # are already gone and their instances are swept in the same pass.
+    session.flush()
+
+    orphan_instances = session.exec(
+        select(EventInstance).where(EventInstance.event_id.not_in(select(Event.id)))
+    ).all()
+    for instance in orphan_instances:
+        session.delete(instance)
+    session.flush()
+
+    removed = len(orphan_events) + len(orphan_instances)
+    if removed:
+        logger.warning(
+            "Swept %d orphaned event row(s) and %d orphaned instance row(s) - "
+            "these belonged to a calendar that no longer exists and no sync could reach them",
+            len(orphan_events),
+            len(orphan_instances),
+        )
+    return removed
+
+
 CANCELLED = "CANCELLED"
 
 
@@ -123,6 +173,11 @@ def seed_calendars_from_settings(session: Session) -> None:
         if source.id is not None:
             _delete_source_events(session, source.id)
         session.delete(source)
+
+    # Startup is the only moment a source row is ever deleted, so it is the
+    # only moment an orphan can be created - and the sweep costs two queries
+    # against tables the reconciler has just finished rewriting anyway.
+    sweep_orphaned_events(session)
 
     session.commit()
 

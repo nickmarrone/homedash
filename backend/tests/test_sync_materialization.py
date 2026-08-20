@@ -300,3 +300,52 @@ class TestCancelled:
         sync_module.sync_source(session, source)
 
         assert titles(session) == ["dentist"]
+
+
+class TestOrphanSweep:
+    """Rows whose parent is gone, which no rebuild can reach.
+
+    Every deletion in sync.py is scoped by source_id, so a row that cannot be
+    reached from a live source row is invisible to both the ordinary rebuild
+    and the forced full resync. It is not invisible to the *panel*, though -
+    the agenda and calendar queries join outwards on purpose so that an
+    instance whose source went missing still renders. That combination is a
+    ghost appointment that outlives every sync.
+    """
+
+    def test_an_instance_whose_event_is_gone_is_swept(self, session, source, serve):
+        serve(vevents("dentist"))
+        sync_module.sync_source(session, source)
+        event = session.exec(select(Event)).one()
+        session.delete(event)
+        session.commit()
+
+        assert sync_module.sweep_orphaned_events(session) == 1
+        session.commit()
+
+        assert titles(session) == []
+
+    def test_an_event_whose_calendar_is_gone_goes_with_its_instances(
+        self, session, source, serve
+    ):
+        serve(vevents("dentist"))
+        sync_module.sync_source(session, source)
+        # Delete the source row alone, the way a version that did not cascade
+        # would have left it.
+        session.delete(session.get(CalendarSource, source.id))
+        session.commit()
+
+        assert sync_module.sweep_orphaned_events(session) == 2
+        session.commit()
+
+        assert session.exec(select(Event)).all() == []
+        assert titles(session) == []
+
+    def test_live_rows_are_left_alone(self, session, source, serve):
+        serve(vevents("dentist", "soccer"))
+        sync_module.sync_source(session, source)
+
+        assert sync_module.sweep_orphaned_events(session) == 0
+        session.commit()
+
+        assert titles(session) == ["dentist", "soccer"]
