@@ -7,7 +7,10 @@ was one layer up, in an adapter deciding nothing had changed.
 
 Adapters are faked rather than mocked at the HTTP layer, because the thing
 being pinned here is the contract between `CalendarSource.changed` and the
-rows that survive a sync.
+rows that survive a sync. `TestGoogleEndToEnd` breaks that rule on purpose:
+a faked adapter cannot prove the seam between `needs_full_resync` deciding
+to force a fetch and Google actually re-listing, and that seam is where a
+deleted appointment either dies or lives forever.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -349,3 +352,100 @@ class TestOrphanSweep:
         session.commit()
 
         assert titles(session) == ["dentist", "soccer"]
+
+
+class GoogleResponse:
+    def __init__(self, payload):
+        self.status_code = 200
+        self._payload = payload
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
+def google_item(uid: str, status: str | None = None) -> dict:
+    start = anchor()
+    item = {
+        "id": uid,
+        "iCalUID": uid,
+        "summary": uid,
+        "start": {"dateTime": start.isoformat()},
+        "end": {"dateTime": (start + timedelta(hours=1)).isoformat()},
+    }
+    if status:
+        item["status"] = status
+    return item
+
+
+class TestGoogleEndToEnd:
+    """The whole chain for the kind that actually reports deletions badly.
+
+    `needs_full_resync` -> `fetch(force=True)` -> a real `events.list` with
+    `showDeleted` -> cancelled tombstones dropped -> the source's rows
+    rebuilt. Every link has its own test; this is the one that fails if two
+    of them stop meeting.
+    """
+
+    @pytest.fixture
+    def google(self, session, monkeypatch):
+        monkeypatch.setattr(
+            sync_module,
+            "settings",
+            Settings(
+                _env_file=None,
+                full_resync_interval_minutes=60,
+                calendar_credentials={
+                    "g": {"client_id": "c", "client_secret": "s", "refresh_token": "r"}
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            "app.calendars.google_auth.refresh_access_token",
+            lambda *a, **k: {"access_token": "at", "expires_in": 3600},
+        )
+        row = CalendarSource(
+            kind="google",
+            name="Family",
+            url="https://x/e",
+            calendar_id="fam@g",
+            credentials_ref="g",
+            enabled=True,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+        served: dict = {"items": [], "probe": []}
+
+        def fake_get(url, params=None, headers=None, **kwargs):
+            if "syncToken" in (params or {}):
+                return GoogleResponse({"items": served["probe"]})
+            return GoogleResponse({"items": served["items"], "nextSyncToken": "tok"})
+
+        monkeypatch.setattr("app.calendars.google_source.httpx.get", fake_get)
+        return row, served
+
+    def test_a_forced_resync_drops_an_event_deleted_on_a_phone(self, session, google):
+        source, served = google
+        served["items"] = [google_item("dentist"), google_item("soccer")]
+        sync_module.sync_source(session, source)
+        assert titles(session) == ["dentist", "soccer"]
+
+        # Deleted on a phone: Google keeps returning it as a cancelled
+        # tombstone. The probe is told to report nothing, so only the forced
+        # resync is left to notice.
+        served["items"] = [google_item("dentist"), google_item("soccer", status="cancelled")]
+        source.last_full_sync_at = datetime.now(timezone.utc)
+        session.add(source)
+        session.commit()
+        assert sync_module.sync_source(session, source) is False
+        assert titles(session) == ["dentist", "soccer"]
+
+        source.last_full_sync_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        session.add(source)
+        session.commit()
+
+        assert sync_module.sync_source(session, source) is True
+        assert titles(session) == ["dentist"]
+        assert [e.uid for e in session.exec(select(Event)).all()] == ["dentist"]
