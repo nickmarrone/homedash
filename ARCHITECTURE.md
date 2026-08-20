@@ -103,7 +103,10 @@ these — the row survives precisely *because* the rebuild ran:
   with a missing source renders uncolored rather than vanishing, which turns an orphan into
   a permanent ghost. `sweep_orphaned_events()` runs from the reconciler at startup, which
   is the only moment a source row is ever deleted. `homedash-inspect-calendars --state`
-  reports any that exist.
+  reports any that exist, and `--find TEXT` answers the question behind any stale
+  appointment: it asks the calendar, with one forced fetch, whether the event on the
+  wall is still being served — which separates "the calendar still has it" from "this
+  row should have been rebuilt away".
 
 ### `photos/`
 
