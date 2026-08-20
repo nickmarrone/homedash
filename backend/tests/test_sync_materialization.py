@@ -20,14 +20,22 @@ from app.calendars import sync as sync_module
 from app.config import Settings
 from app.models import CalendarSource, Event, EventInstance
 
-NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
-
 
 def vevents(*uids: str) -> list:
-    """VEVENT masters for one timed event per uid, all inside the window."""
+    """VEVENT masters for one timed event per uid, all inside the window.
+
+    Anchored to the clock rather than written as a literal date. The
+    materialization window is measured from `now` and rolls forward with it,
+    so a fixed DTSTART silently falls out of the past end of it once enough
+    real time has passed - and every assertion about which titles survived a
+    sync then reads empty, blaming the reconciler for the calendar.
+    """
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    starts_at = start.strftime("%Y%m%dT%H0000Z")
+    ends_at = (start + timedelta(hours=1)).strftime("%Y%m%dT%H0000Z")
     body = "".join(
         f"BEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:{uid}\r\n"
-        f"DTSTART:20260821T160000Z\r\nDTEND:20260821T170000Z\r\nEND:VEVENT\r\n"
+        f"DTSTART:{starts_at}\r\nDTEND:{ends_at}\r\nEND:VEVENT\r\n"
         for uid in uids
     )
     calendar = Calendar.from_ical(
@@ -118,7 +126,11 @@ class TestDeletion:
         sync_module.sync_source(session, source)
 
         adapter = serve(vevents("dentist"), changed=False)
-        source.last_full_sync_at = NOW
+        # Now, not a literal: needs_full_resync measures this against the real
+        # clock, so a written-in date reads as overdue the moment the resync
+        # interval has elapsed since someone typed it - and the test then
+        # exercises the rebuild it exists to prove was skipped.
+        source.last_full_sync_at = datetime.now(timezone.utc)
         rewritten = sync_module.sync_source(session, source)
 
         assert rewritten is False
