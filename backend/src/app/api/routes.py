@@ -221,6 +221,7 @@ def get_weather() -> dict:
         "astro": astro_summary(
             datetime.now(timezone.utc),
             settings.weather_latitude,
+            settings.weather_longitude,
             ZoneInfo(settings.home_timezone),
         ),
     }

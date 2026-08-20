@@ -18,19 +18,31 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.astro import (
+    BRIGHT_MOON,
     METEOR_SHOWERS,
+    altitude_of,
     astro_summary,
+    julian_day,
     meteor_showers_between,
+    moon_equatorial,
     moon_phase,
     next_moon_phases,
     previous_new_moon,
-    radiant_max_altitude,
     seasons_between,
+    shower_viewing,
     sky_events,
+    sun_equatorial,
 )
 
 UTC = timezone.utc
 PACIFIC = ZoneInfo("America/Los_Angeles")
+SYDNEY = ZoneInfo("Australia/Sydney")
+REYKJAVIK = ZoneInfo("Atlantic/Reykjavik")
+
+# (latitude, longitude), east positive.
+SAN_FRANCISCO = (37.77, -122.42)
+SYDNEY_AT = (-33.87, 151.21)
+REYKJAVIK_AT = (64.13, -21.90)
 
 
 def minutes_apart(a: datetime, b: datetime) -> float:
@@ -167,68 +179,216 @@ class TestSeasons:
         assert [name for name, _ in found] == ["Winter Solstice"]
 
 
-class TestMeteorShowers:
-    def test_the_perseids_are_invisible_from_sydney(self):
-        """Radiant declination +58 never rises at latitude -34. Listing it
-        would send somebody outside to look at nothing."""
-        assert radiant_max_altitude(58.0, -33.9) < 0
-        found = meteor_showers_between(date(2026, 8, 1), date(2026, 8, 31), -33.9)
-        assert found == []
+class TestSkyPositions:
+    """The positional astronomy the local answers are built on.
 
-    def test_the_perseids_are_visible_from_california(self):
-        found = meteor_showers_between(date(2026, 8, 1), date(2026, 8, 31), 37.7)
-        assert [shower.name for shower, _ in found] == ["Perseids"]
+    Checked against facts that are true by definition rather than a published
+    table, because those cannot go stale and cannot be fudged.
+    """
+
+    @pytest.mark.parametrize(
+        "moment, expected_ra, expected_dec",
+        [
+            (datetime(2026, 3, 20, 14, 46, tzinfo=UTC), 0.0, 0.0),
+            (datetime(2026, 6, 21, 8, 24, tzinfo=UTC), 90.0, 23.44),
+            (datetime(2026, 9, 23, 0, 5, tzinfo=UTC), 180.0, 0.0),
+            (datetime(2026, 12, 21, 20, 50, tzinfo=UTC), 270.0, -23.44),
+        ],
+    )
+    def test_the_sun_sits_where_each_season_defines_it(self, moment, expected_ra, expected_dec):
+        """An equinox *is* the Sun at right ascension 0; a solstice is 90 or
+        270. The season code and the position code share nothing, so agreeing
+        here means both are right."""
+        ra, dec = sun_equatorial(julian_day(moment))
+        assert abs(((ra - expected_ra + 180) % 360) - 180) < 0.1
+        assert abs(dec - expected_dec) < 0.1
+
+    def test_the_sun_reaches_the_altitude_geometry_demands(self):
+        """At the December solstice the Sun's noon altitude is exactly
+        90 - latitude - 23.44. A sign error in the hour angle, or a sidereal
+        time that drifts, would miss this."""
+        latitude, longitude = SAN_FRANCISCO
+        noon = datetime(2026, 12, 21, 20, tzinfo=UTC)  # about solar noon in California
+        altitude = altitude_of(*sun_equatorial(julian_day(noon)), julian_day(noon), latitude, longitude)
+        assert abs(altitude - (90 - latitude - 23.44)) < 1.0
+
+    def test_the_full_moon_is_opposite_the_sun(self):
+        """Full means opposite, by definition - which checks the lunar
+        position series against the ch. 49 phase code, derived independently
+        of it."""
+        full = datetime(2026, 8, 28, 4, 19, tzinfo=UTC)
+        sun_ra, _ = sun_equatorial(julian_day(full))
+        moon_ra, _ = moon_equatorial(julian_day(full))
+        assert abs(((moon_ra - sun_ra + 180) % 360) - 180) > 178
+
+    def test_the_new_moon_is_alongside_the_sun(self):
+        new = datetime(2026, 8, 12, 17, 37, tzinfo=UTC)
+        sun_ra, _ = sun_equatorial(julian_day(new))
+        moon_ra, _ = moon_equatorial(julian_day(new))
+        assert abs(((moon_ra - sun_ra + 180) % 360) - 180) < 2
+
+
+class TestMeteorShowers:
+    def test_the_perseids_never_rise_in_sydney(self):
+        """Radiant declination +58 never clears the horizon at latitude -34.
+        Listing it would send somebody outside to look at nothing."""
+        assert meteor_showers_between(
+            date(2026, 8, 1), date(2026, 8, 31), *SYDNEY_AT, SYDNEY
+        ) == []
+
+    def test_the_perseids_are_high_and_late_from_california(self):
+        found = meteor_showers_between(
+            date(2026, 8, 1), date(2026, 8, 31), *SAN_FRANCISCO, PACIFIC
+        )
+        assert [shower.name for shower, _, _ in found] == ["Perseids"]
+        _, _, viewing = found[0]
+        # The radiant climbs all night, so the best moment is in the small
+        # hours rather than the evening.
+        assert viewing.best_at.hour < 7
+        assert viewing.altitude > 50
+
+    def test_an_arctic_summer_night_is_never_dark_enough(self):
+        """The old latitude-only test put the Perseids on a panel in
+        Reykjavik, because it never asked whether the radiant was up at a time
+        anyone could see it. In August there the sky never gets dark at all."""
+        assert meteor_showers_between(
+            date(2026, 8, 1), date(2026, 8, 31), *REYKJAVIK_AT, REYKJAVIK
+        ) == []
+
+    def test_the_geminids_are_visible_but_low_from_sydney(self):
+        """Latitude decides how good, not only whether. Declination +32 seen
+        from latitude -34 tops out low, and saying so is the difference
+        between useful and merely true."""
+        northern = meteor_showers_between(
+            date(2026, 12, 10), date(2026, 12, 18), *SAN_FRANCISCO, PACIFIC
+        )
+        southern = meteor_showers_between(
+            date(2026, 12, 10), date(2026, 12, 18), *SYDNEY_AT, SYDNEY
+        )
+        assert [s.name for s, _, _ in northern] == ["Geminids"]
+        assert [s.name for s, _, _ in southern] == ["Geminids"]
+        assert northern[0][2].altitude > 80
+        assert southern[0][2].altitude < 30
+
+    def test_longitude_changes_when_not_whether(self):
+        """Two places on the same parallel see a shower equally high but at
+        different clock times. That is what longitude is for, and what a
+        latitude-only model cannot express at all."""
+        geminids = next(s for s in METEOR_SHOWERS if s.name == "Geminids")
+        west = shower_viewing(geminids, date(2026, 12, 14), 40.0, -120.0, PACIFIC)
+        east = shower_viewing(geminids, date(2026, 12, 14), 40.0, 0.0, ZoneInfo("UTC"))
+
+        assert west is not None and east is not None
+        assert abs(west.altitude - east.altitude) < 3
+        # Same wall-clock hour locally, eight hours apart as instants.
+        assert abs((west.best_at - east.best_at).total_seconds()) > 7 * 3600
+
+    def test_the_draconids_are_an_evening_shower(self):
+        """Almost every shower is best before dawn, because that is when your
+        side of the Earth faces into its orbit. The Draconids are the famous
+        exception - a circumpolar radiant highest at dusk - and getting that
+        right is the clearest sign the answer comes from the sky rather than
+        from a rule of thumb about early mornings.
+        """
+        draconids = next(s for s in METEOR_SHOWERS if s.name == "Draconids")
+        viewing = shower_viewing(draconids, date(2026, 10, 8), *SAN_FRANCISCO, PACIFIC)
+
+        assert viewing is not None
+        assert viewing.best_at.hour >= 18
+
+    def test_a_shower_under_a_risen_bright_moon_is_flagged(self):
+        ursids = next(s for s in METEOR_SHOWERS if s.name == "Ursids")
+        viewing = shower_viewing(ursids, date(2026, 12, 22), *SAN_FRANCISCO, PACIFIC)
+
+        assert viewing is not None
+        assert viewing.moon_illumination > BRIGHT_MOON
+        assert viewing.moon_altitude > 0
+        assert viewing.moonlit is True
 
     def test_an_equatorial_radiant_is_visible_from_both_hemispheres(self):
         may = (date(2026, 5, 1), date(2026, 5, 31))
-        for latitude in (37.7, -33.9):
-            found = meteor_showers_between(*may, latitude)
-            assert [shower.name for shower, _ in found] == ["Eta Aquariids"]
+        north = meteor_showers_between(*may, *SAN_FRANCISCO, PACIFIC)
+        south = meteor_showers_between(*may, *SYDNEY_AT, SYDNEY)
+        assert "Eta Aquariids" in [s.name for s, _, _ in north]
+        assert "Eta Aquariids" in [s.name for s, _, _ in south]
 
     def test_a_window_spanning_new_year_finds_the_quadrantids(self):
-        found = meteor_showers_between(date(2026, 12, 28), date(2027, 1, 18), 37.7)
-        assert [shower.name for shower, _ in found] == ["Quadrantids"]
+        found = meteor_showers_between(
+            date(2026, 12, 28), date(2027, 1, 18), *SAN_FRANCISCO, PACIFIC
+        )
+        assert [s.name for s, _, _ in found] == ["Quadrantids"]
 
-    def test_every_shower_in_the_table_is_a_real_date(self):
+    def test_every_shower_in_the_table_is_a_real_date_and_position(self):
         for shower in METEOR_SHOWERS:
             date(2026, shower.month, shower.day)
+            assert 0 <= shower.right_ascension < 360, shower.name
+            assert -90 <= shower.declination <= 90, shower.name
+            assert shower.zhr > 0, shower.name
+
+    def test_the_whole_visual_working_list_is_present(self):
+        """The showers a person can actually watch - not the IAU catalogue of
+        several hundred, most of which were found by radar and produce a
+        meteor an hour."""
+        assert {s.name for s in METEOR_SHOWERS} == {
+            "Quadrantids",
+            "Lyrids",
+            "Eta Aquariids",
+            "Alpha Capricornids",
+            "Southern Delta Aquariids",
+            "Perseids",
+            "Draconids",
+            "Orionids",
+            "Southern Taurids",
+            "Northern Taurids",
+            "Leonids",
+            "Geminids",
+            "Ursids",
+        }
 
 
 class TestSkyEvents:
     def test_events_come_back_in_date_order(self):
-        events = sky_events(datetime(2026, 12, 5, tzinfo=UTC), 37.7, PACIFIC)
+        events = sky_events(datetime(2026, 12, 5, tzinfo=UTC), *SAN_FRANCISCO, PACIFIC)
         assert [e["date"] for e in events] == sorted(e["date"] for e in events)
 
     def test_nothing_lands_outside_the_lookahead(self):
         now = datetime(2026, 12, 5, tzinfo=UTC)
         horizon = (now + timedelta(days=21)).date().isoformat()
-        for event in sky_events(now, 37.7, PACIFIC):
+        for event in sky_events(now, *SAN_FRANCISCO, PACIFIC):
             assert now.date().isoformat() <= event["date"] <= horizon
 
     def test_a_shower_under_a_bright_moon_says_so(self):
         """The Ursids peak on 22 December 2026 with the Moon two days off
-        full. Announcing a 10-per-hour shower into a washed-out sky without
-        saying so is how a panel loses trust."""
-        events = sky_events(datetime(2026, 12, 15, tzinfo=UTC), 37.7, PACIFIC)
+        full and above the horizon. Announcing a 10-per-hour shower into a
+        washed-out sky without saying so is how a panel loses trust."""
+        events = sky_events(datetime(2026, 12, 15, tzinfo=UTC), *SAN_FRANCISCO, PACIFIC)
         ursids = next(e for e in events if e["name"] == "Ursids")
-        assert "washed out" in ursids["detail"]
+        assert "bright moon" in ursids["detail"]
 
-    def test_the_geminids_are_not_marked_washed_out(self):
-        """Same fortnight, six days after new moon - the check has to be
-        judging the sky at each peak rather than the sky tonight."""
-        events = sky_events(datetime(2026, 12, 5, tzinfo=UTC), 37.7, PACIFIC)
+    def test_the_geminids_are_not_marked_moonlit(self):
+        """Same fortnight, six days after new moon - the check has to judge
+        the sky at each peak rather than the sky tonight."""
+        events = sky_events(datetime(2026, 12, 5, tzinfo=UTC), *SAN_FRANCISCO, PACIFIC)
         geminids = next(e for e in events if e["name"] == "Geminids")
-        assert "washed out" not in geminids["detail"]
+        assert "bright moon" not in geminids["detail"]
+
+    def test_a_shower_detail_says_when_and_how_high(self):
+        """The part that needs coordinates. A date alone is a calendar; a
+        time and an altitude are an instruction."""
+        events = sky_events(datetime(2026, 12, 5, tzinfo=UTC), *SAN_FRANCISCO, PACIFIC)
+        geminids = next(e for e in events if e["name"] == "Geminids")
+        assert "best" in geminids["detail"]
+        assert "up" in geminids["detail"]
 
     def test_dates_are_local_not_utc(self):
         """A full moon at 16:00 Pacific is the 27th there and the 28th in UTC.
         The panel plans evenings in local time."""
-        events = sky_events(datetime(2026, 8, 20, tzinfo=UTC), 37.7, PACIFIC)
+        events = sky_events(datetime(2026, 8, 20, tzinfo=UTC), *SAN_FRANCISCO, PACIFIC)
         full = next(e for e in events if e["name"] == "Full Moon")
         assert full["date"] == "2026-08-27"
 
     def test_a_summary_carries_the_moon_and_the_events(self):
-        summary = astro_summary(datetime(2026, 12, 5, tzinfo=UTC), 37.7, PACIFIC)
+        summary = astro_summary(datetime(2026, 12, 5, tzinfo=UTC), *SAN_FRANCISCO, PACIFIC)
         assert summary["moon"]["phase"] in {
             "New Moon",
             "Waxing Crescent",

@@ -204,15 +204,33 @@ fraction rather than rounded to one of eight icons. Above the hourly strip is a 
 **upcoming sky events** for the next three weeks: new and full moons, meteor shower peaks, and
 the next equinox or solstice. Anything happening tonight is picked out in bold.
 
-All of it is computed from your configured coordinates — there is no second API to configure and
-nothing else to go down, which is also why the moon is still there when Open-Meteo is not.
-Your latitude does real work: a meteor shower whose radiant never rises where you live is not
-listed (the Perseids are simply absent in Sydney), seasons are named for your hemisphere, and
-the moon is drawn lit on the correct side. A shower peaking under a near-full moon says so,
-because that is the difference between a good night out and a wasted one.
+All of it is computed from your configured latitude and longitude — there is no second API to
+set up and nothing else to go down, which is also why the moon is still there when Open-Meteo
+is not.
 
-Accuracy is a couple of minutes for moon phases and under an hour for solstices, both far
-tighter than a date needs. See `backend/src/app/astro.py` for the algorithms and their sources.
+**Your coordinates do real work.** For each shower the panel walks that night at your location,
+finds the darkest moment when the radiant is highest, and reports it:
+
+```
+Geminids       Dec 14   ~150/hr, best 2am, radiant 85° up
+Ursids         Dec 22   ~10/hr, best 6:15am, radiant 49° up, bright moon
+```
+
+A shower whose radiant never climbs into a dark sky where you live is not listed at all — the
+Perseids are simply absent in Sydney, and absent in Reykjavík in August because the sky never
+gets dark. The Geminids show at 85° from California and 24° from Sydney, and say so. The
+Draconids come out as an evening shower while everything else peaks before dawn, because that
+is what their radiant actually does. A bright moon is flagged only when it is *above the
+horizon* at the best moment, which is the difference between a good night out and a wasted one.
+Seasons are named for your hemisphere and the moon is drawn lit on the correct side.
+
+The thirteen showers are the IMO visual working list — the ones a person can actually watch.
+The IAU catalogue holds hundreds more, but nearly all were found by radar or camera networks
+and produce a meteor an hour or less: real, and invisible.
+
+Accuracy is a couple of minutes for moon phases, under an hour for solstices, and a fraction of
+a degree for positions — all far tighter than a date and a rounded altitude need. See
+`backend/src/app/astro.py` for the algorithms and their sources.
 
 ---
 

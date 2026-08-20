@@ -191,6 +191,117 @@ def next_moon_phases(moment: datetime) -> list[tuple[str, datetime]]:
     return sorted(found, key=lambda item: item[1])
 
 
+# --- where things are in *your* sky ------------------------------------------
+#
+# Everything above answers "when". This answers "where from here", which is
+# what turns a date into something worth acting on: a shower whose radiant only
+# clears the horizon at noon is not visible tonight however high it gets, and a
+# fixed calendar date cannot tell you that. Latitude and longitude both matter -
+# latitude sets how high the radiant climbs, longitude sets when.
+
+
+def _cos(degrees: float) -> float:
+    return math.cos(math.radians(degrees))
+
+
+def _norm(degrees: float) -> float:
+    return degrees % 360.0
+
+
+def greenwich_sidereal_time(jd: float) -> float:
+    """Greenwich mean sidereal time in degrees (Meeus 12.4).
+
+    Sidereal time is the bridge between a clock and the sky: it says which
+    right ascension is currently overhead at Greenwich, and adding the
+    longitude moves that to here.
+    """
+    t = (jd - 2451545.0) / 36525.0
+    return _norm(
+        280.46061837
+        + 360.98564736629 * (jd - 2451545.0)
+        + 0.000387933 * t**2
+        - t**3 / 38710000.0
+    )
+
+
+def altitude_of(ra: float, dec: float, jd: float, latitude: float, longitude: float) -> float:
+    """How high a fixed point on the sky sits above the horizon, in degrees.
+
+    Negative means below it. East longitude is positive, matching the
+    convention Open-Meteo is already configured with.
+    """
+    hour_angle = _norm(greenwich_sidereal_time(jd) + longitude - ra)
+    sin_alt = (
+        _sin(dec) * _sin(latitude)
+        + _cos(dec) * _cos(latitude) * _cos(hour_angle)
+    )
+    return math.degrees(math.asin(max(-1.0, min(1.0, sin_alt))))
+
+
+OBLIQUITY = 23.4393
+
+
+def _ecliptic_to_equatorial(longitude: float, latitude: float) -> tuple[float, float]:
+    """Ecliptic coordinates to right ascension and declination, in degrees."""
+    sin_dec = _sin(latitude) * _cos(OBLIQUITY) + _cos(latitude) * _sin(OBLIQUITY) * _sin(longitude)
+    dec = math.degrees(math.asin(max(-1.0, min(1.0, sin_dec))))
+    ra = math.degrees(
+        math.atan2(
+            _sin(longitude) * _cos(OBLIQUITY) - math.tan(math.radians(latitude)) * _sin(OBLIQUITY),
+            _cos(longitude),
+        )
+    )
+    return _norm(ra), dec
+
+
+def sun_equatorial(jd: float) -> tuple[float, float]:
+    """The Sun's right ascension and declination (Meeus ch. 25, low accuracy).
+
+    Good to about 0.01 degrees, which is far better than deciding whether the
+    sky is dark needs.
+    """
+    n = jd - 2451545.0
+    mean_longitude = _norm(280.460 + 0.9856474 * n)
+    anomaly = _norm(357.528 + 0.9856003 * n)
+    ecliptic_longitude = _norm(
+        mean_longitude + 1.915 * _sin(anomaly) + 0.020 * _sin(2 * anomaly)
+    )
+    return _ecliptic_to_equatorial(ecliptic_longitude, 0.0)
+
+
+def moon_equatorial(jd: float) -> tuple[float, float]:
+    """The Moon's right ascension and declination.
+
+    The truncated lunar series - the handful of largest periodic terms, good
+    to roughly a third of a degree. The full theory runs to hundreds of terms
+    and buys nothing here: this only has to answer "is the Moon up, and how
+    high", where a third of a degree is invisible.
+    """
+    t = (jd - 2451545.0) / 36525.0
+    mean_longitude = 218.316 + 481267.8813 * t
+    sun_anomaly = 357.529 + 35999.0503 * t
+    moon_anomaly = 134.963 + 477198.8676 * t
+    elongation = 297.850 + 445267.1115 * t
+    argument_of_latitude = 93.272 + 483202.0175 * t
+
+    ecliptic_longitude = _norm(
+        mean_longitude
+        + 6.289 * _sin(moon_anomaly)
+        + 1.274 * _sin(2 * elongation - moon_anomaly)
+        + 0.658 * _sin(2 * elongation)
+        + 0.214 * _sin(2 * moon_anomaly)
+        - 0.186 * _sin(sun_anomaly)
+        - 0.114 * _sin(2 * argument_of_latitude)
+    )
+    ecliptic_latitude = (
+        5.128 * _sin(argument_of_latitude)
+        + 0.281 * _sin(moon_anomaly + argument_of_latitude)
+        + 0.278 * _sin(moon_anomaly - argument_of_latitude)
+        + 0.173 * _sin(2 * elongation - argument_of_latitude)
+    )
+    return _ecliptic_to_equatorial(ecliptic_longitude, ecliptic_latitude)
+
+
 # Meeus ch. 27, table 27.5: mean equinoxes and solstices for 1000-3000. The
 # name is the northern-hemisphere one; southern names are swapped below.
 _SEASON_TERMS = {
@@ -232,51 +343,136 @@ class MeteorShower:
     name: str
     month: int
     day: int
-    #: Declination of the radiant, which is what decides whether the shower is
-    #: visible from a given latitude at all.
+    #: Radiant position, J2000. Declination sets how high it can climb from a
+    #: given latitude; right ascension sets *when* it is up, which is why both
+    #: are needed and why longitude matters as much as latitude.
+    right_ascension: float
     declination: float
     #: Zenithal hourly rate at peak, under a dark sky with the radiant
     #: overhead. Real counts are always lower; it is a comparative number.
     zhr: int
 
 
-# The showers worth waking a child up for. Minor ones are left out on purpose:
-# a strip that lists a 5-per-hour shower teaches people to ignore it.
+# Every shower on the IMO working list that is worth going outside for, with
+# its radiant position from that list.
+#
+# This is deliberately not "all of them". The IAU Meteor Data Center holds
+# well over a hundred established showers and several hundred more on its
+# working list, but the great majority were found by radar or camera networks
+# and produce a meteor an hour or less - they are real, and invisible. The
+# useful cut is the visual working list, which is what this is.
+#
+# The low-rate entries here earn their place for reasons a ZHR does not carry:
+# the Taurids are slow, dramatic fireballs spread over weeks, the Alpha
+# Capricornids are the brightest of the summer, and the Draconids are the one
+# shower that occasionally storms.
 METEOR_SHOWERS = [
-    MeteorShower("Quadrantids", 1, 3, 49.7, 110),
-    MeteorShower("Lyrids", 4, 22, 33.3, 18),
-    MeteorShower("Eta Aquariids", 5, 6, -1.0, 50),
-    MeteorShower("Delta Aquariids", 7, 30, -16.4, 25),
-    MeteorShower("Perseids", 8, 12, 58.0, 100),
-    MeteorShower("Orionids", 10, 21, 15.8, 20),
-    MeteorShower("Leonids", 11, 17, 21.6, 15),
-    MeteorShower("Geminids", 12, 14, 32.4, 150),
-    MeteorShower("Ursids", 12, 22, 75.3, 10),
+    MeteorShower("Quadrantids", 1, 3, 230.1, 49.5, 110),
+    MeteorShower("Lyrids", 4, 22, 271.4, 33.6, 18),
+    MeteorShower("Eta Aquariids", 5, 6, 338.0, -1.0, 50),
+    MeteorShower("Alpha Capricornids", 7, 30, 307.0, -10.0, 5),
+    MeteorShower("Southern Delta Aquariids", 7, 30, 340.0, -16.4, 25),
+    MeteorShower("Perseids", 8, 12, 46.2, 58.0, 100),
+    MeteorShower("Draconids", 10, 8, 262.0, 54.0, 10),
+    MeteorShower("Orionids", 10, 21, 95.2, 15.8, 20),
+    MeteorShower("Southern Taurids", 11, 5, 52.0, 15.0, 5),
+    MeteorShower("Northern Taurids", 11, 12, 58.0, 22.0, 5),
+    MeteorShower("Leonids", 11, 17, 152.3, 21.6, 15),
+    MeteorShower("Geminids", 12, 14, 112.3, 32.5, 150),
+    MeteorShower("Ursids", 12, 22, 217.0, 75.4, 10),
 ]
 
-# Below this the radiant never climbs far enough out of the haze for the
-# shower to be worth announcing - which is how the Perseids correctly vanish
-# from a panel in Sydney and the Eta Aquariids stay on it.
+#: Below this the radiant is too low for the shower to be worth announcing -
+#: meteors near the horizon are few and dimmed by the thickness of air.
 MIN_RADIANT_ALTITUDE = 15.0
 
+#: The Sun this far below the horizon is dark enough to watch meteors.
+#: Astronomical twilight (-18) is the textbook answer, but at high latitudes
+#: the Sun never gets there for months, which would silently drop every summer
+#: shower rather than admit the sky is merely good rather than perfect.
+DARK_SUN_ALTITUDE = -12.0
 
-def radiant_max_altitude(declination: float, latitude: float) -> float:
-    """How high the radiant gets at its best, in degrees above the horizon."""
-    return 90.0 - abs(latitude - declination)
+#: Sampling interval across the night. Fifteen minutes is finer than any
+#: advice that comes out of it - "best around 2am" - and keeps a whole night
+#: to about fifty position calculations.
+_NIGHT_STEP = timedelta(minutes=15)
+
+
+@dataclass(frozen=True)
+class Viewing:
+    """When and how well a shower can actually be seen from one place."""
+
+    #: Local time the radiant is highest while the sky is dark.
+    best_at: datetime
+    #: Its altitude then, in degrees.
+    altitude: float
+    #: The Moon's altitude and illuminated fraction at that moment. A bright
+    #: Moon above the horizon is the difference between a good night and a
+    #: wasted one, and it is the single most common reason a widely
+    #: advertised shower disappoints.
+    moon_altitude: float
+    moon_illumination: float
+
+    @property
+    def moonlit(self) -> bool:
+        return self.moon_altitude > 0 and self.moon_illumination >= BRIGHT_MOON
+
+
+def shower_viewing(
+    shower: MeteorShower, peak: date, latitude: float, longitude: float, tz: ZoneInfo
+) -> Viewing | None:
+    """The best moment to watch a shower from one place, or None if it never
+    rises far enough into a dark sky there.
+
+    This is the whole reason the panel needs coordinates rather than a
+    calendar. A radiant that transits at noon is useless however high it
+    climbs, and the old "90 - |latitude - declination|" test could not see
+    that: it measured the best altitude over a whole day, including the half
+    of it spent in daylight.
+
+    The night is walked from evening to the following dawn, keeping the
+    darkest-sky moment at which the radiant is highest.
+    """
+    start = datetime(peak.year, peak.month, peak.day, 12, tzinfo=tz)
+    moment = start
+    end = start + timedelta(hours=24)
+
+    best: Viewing | None = None
+    while moment < end:
+        jd = julian_day(moment)
+        sun_ra, sun_dec = sun_equatorial(jd)
+        if altitude_of(sun_ra, sun_dec, jd, latitude, longitude) <= DARK_SUN_ALTITUDE:
+            radiant = altitude_of(
+                shower.right_ascension, shower.declination, jd, latitude, longitude
+            )
+            if best is None or radiant > best.altitude:
+                moon_ra, moon_dec = moon_equatorial(jd)
+                best = Viewing(
+                    best_at=moment,
+                    altitude=radiant,
+                    moon_altitude=altitude_of(moon_ra, moon_dec, jd, latitude, longitude),
+                    moon_illumination=moon_phase(moment, latitude)["illumination"],
+                )
+        moment += _NIGHT_STEP
+
+    if best is None or best.altitude < MIN_RADIANT_ALTITUDE:
+        return None
+    return best
 
 
 def meteor_showers_between(
-    start: date, end: date, latitude: float
-) -> list[tuple[MeteorShower, date]]:
-    """Shower peaks in a date window that are actually visible from a latitude."""
-    found: list[tuple[MeteorShower, date]] = []
+    start: date, end: date, latitude: float, longitude: float, tz: ZoneInfo
+) -> list[tuple[MeteorShower, date, Viewing]]:
+    """Shower peaks in a date window that can actually be seen from here."""
+    found: list[tuple[MeteorShower, date, Viewing]] = []
     for year in range(start.year, end.year + 1):
         for shower in METEOR_SHOWERS:
-            if radiant_max_altitude(shower.declination, latitude) < MIN_RADIANT_ALTITUDE:
-                continue
             peak = date(year, shower.month, shower.day)
-            if start <= peak <= end:
-                found.append((shower, peak))
+            if not (start <= peak <= end):
+                continue
+            viewing = shower_viewing(shower, peak, latitude, longitude, tz)
+            if viewing is not None:
+                found.append((shower, peak, viewing))
     return sorted(found, key=lambda item: item[1])
 
 
@@ -290,8 +486,21 @@ LOOKAHEAD_DAYS = 21
 BRIGHT_MOON = 0.6
 
 
-def sky_events(moment: datetime, latitude: float, tz: ZoneInfo, days: int = LOOKAHEAD_DAYS) -> list[dict]:
-    """What is happening in the sky over the next few weeks, soonest first.
+def _clock(moment: datetime) -> str:
+    """A bare local time, "2am" or "11:30pm", for a one-line detail string."""
+    hour = moment.hour % 12 or 12
+    suffix = "am" if moment.hour < 12 else "pm"
+    return f"{hour}{suffix}" if moment.minute == 0 else f"{hour}:{moment.minute:02d}{suffix}"
+
+
+def sky_events(
+    moment: datetime,
+    latitude: float,
+    longitude: float,
+    tz: ZoneInfo,
+    days: int = LOOKAHEAD_DAYS,
+) -> list[dict]:
+    """What is happening in *this* sky over the next few weeks, soonest first.
 
     Dates are local calendar dates, because "the 12th" is how a family plans an
     evening. The instants behind them are UTC throughout; only the final
@@ -312,23 +521,21 @@ def sky_events(moment: datetime, latitude: float, tz: ZoneInfo, days: int = LOOK
             }
         )
 
-    for shower, peak in meteor_showers_between(
-        moment.astimezone(tz).date(), horizon.astimezone(tz).date(), latitude
+    for shower, peak, viewing in meteor_showers_between(
+        moment.astimezone(tz).date(), horizon.astimezone(tz).date(), latitude, longitude, tz
     ):
-        # The Moon at the peak, not now - a shower three weeks out is judged by
-        # the sky it will actually have.
-        peak_moment = datetime(peak.year, peak.month, peak.day, 22, tzinfo=tz)
-        moon = moon_phase(peak_moment, latitude)
-        washed_out = moon["illumination"] >= BRIGHT_MOON
+        # Everything after the rate is specific to these coordinates: when the
+        # radiant is highest in a dark sky here, how high that is, and whether
+        # the Moon is up to spoil it.
+        detail = f"~{shower.zhr}/hr, best {_clock(viewing.best_at)}, radiant {round(viewing.altitude)}\u00b0 up"
+        if viewing.moonlit:
+            detail += ", bright moon"
         events.append(
             {
                 "kind": "meteor_shower",
                 "name": shower.name,
                 "date": peak.isoformat(),
-                "detail": (
-                    f"~{shower.zhr}/hr peak"
-                    + (", washed out by moonlight" if washed_out else "")
-                ),
+                "detail": detail,
             }
         )
 
@@ -345,9 +552,9 @@ def sky_events(moment: datetime, latitude: float, tz: ZoneInfo, days: int = LOOK
     return sorted(events, key=lambda event: event["date"])
 
 
-def astro_summary(moment: datetime, latitude: float, tz: ZoneInfo) -> dict:
+def astro_summary(moment: datetime, latitude: float, longitude: float, tz: ZoneInfo) -> dict:
     """Everything the panel's sky strip needs, in one call."""
     return {
         "moon": moon_phase(moment, latitude),
-        "events": sky_events(moment, latitude, tz),
+        "events": sky_events(moment, latitude, longitude, tz),
     }
