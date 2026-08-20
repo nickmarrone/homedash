@@ -205,6 +205,25 @@ class Settings(BaseSettings):
     weather_temperature_unit: Literal["fahrenheit", "celsius"] = "fahrenheit"
     weather_cache_minutes: int = 20
 
+    # The folder the screensaver draws from. Nothing here is an on/off switch:
+    # a missing or empty folder yields an empty playlist and the panel simply
+    # never drifts, the same way an absent frontend_dist skips the static mount.
+    photos_dir: Path = BACKEND_ROOT.parent / "photos"
+    # Resized JPEGs, kept out of data/ on purpose. They are regenerable from the
+    # originals, and a backup of the database volume should not have to carry
+    # hundreds of megabytes of them.
+    photo_cache_dir: Path = BACKEND_ROOT / "photo-cache"
+    # The backstop rescan. A filesystem observer picks up most changes within
+    # seconds; this is what covers the cases inotify cannot see - notably a
+    # folder filled over SMB or NFS, where the writes happen on another host.
+    photo_index_interval_minutes: int = 15
+    # Caps the playlist the panel is handed. Well past a family photo folder,
+    # and it keeps one JSON response from growing without bound.
+    photo_max_count: int = 2000
+
+    screensaver_idle_minutes: int = 5
+    screensaver_dwell_seconds: int = 30
+
     frontend_dist: Path = BACKEND_ROOT.parent / "frontend" / "build"
 
     @field_validator("calendars", mode="before")

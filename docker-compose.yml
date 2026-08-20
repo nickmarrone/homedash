@@ -6,6 +6,13 @@ services:
       - "8000:8000"
     volumes:
       - homedash-data:/app/backend/data
+      # Read-only on purpose: a bug in HomeDash must never be able to delete a
+      # family photo. Point HOMEDASH_PHOTOS_SOURCE at wherever yours live.
+      - ${HOMEDASH_PHOTOS_SOURCE:-./photos}:/photos:ro
+      # Its own volume rather than a directory under the data one: these are
+      # regenerable from the originals, so a backup of the database should not
+      # have to carry them, and this can be deleted to force a clean re-render.
+      - homedash-photos:/app/backend/photo-cache
     environment:
       HOMEDASH_HOME_TIMEZONE: ${HOMEDASH_HOME_TIMEZONE:-UTC}
       # Quoted: the values are JSON, whose braces and quotes would otherwise
@@ -30,7 +37,14 @@ services:
       # Quoted for the same reason as the calendar values above.
       HOMEDASH_SCREEN_SCHEDULE: "${HOMEDASH_SCREEN_SCHEDULE:-}"
       HOMEDASH_DEVICE_NAME: ${HOMEDASH_DEVICE_NAME:-panel}
+      HOMEDASH_PHOTOS_DIR: /photos
+      HOMEDASH_PHOTO_CACHE_DIR: /app/backend/photo-cache
+      HOMEDASH_PHOTO_INDEX_INTERVAL_MINUTES: ${HOMEDASH_PHOTO_INDEX_INTERVAL_MINUTES:-15}
+      HOMEDASH_PHOTO_MAX_COUNT: ${HOMEDASH_PHOTO_MAX_COUNT:-2000}
+      HOMEDASH_SCREENSAVER_IDLE_MINUTES: ${HOMEDASH_SCREENSAVER_IDLE_MINUTES:-5}
+      HOMEDASH_SCREENSAVER_DWELL_SECONDS: ${HOMEDASH_SCREENSAVER_DWELL_SECONDS:-30}
     restart: unless-stopped
 
 volumes:
   homedash-data:
+  homedash-photos:

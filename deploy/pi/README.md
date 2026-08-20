@@ -115,8 +115,15 @@ journalctl -u homedash-screen -f          # what the agent is doing about it
 ```
 
 If **nothing** darkens the panel, the monitor ignores output power management.
-Say so and the panel can fall back to rendering a full-screen black page — not
-as good, since the backlight stays on, but it does make the kitchen dark.
+That is survivable: the panel already renders a full-screen black page whenever
+the schedule says the screen should be off, so the kitchen goes dark either way.
+The backlight staying on is the only difference, which is a power and
+panel-lifetime question rather than a "the calendar is glowing at 2am" one.
+
+That fallback needs no configuration and is not a mode you switch on — it
+follows the same `HOMEDASH_SCREEN_SCHEDULE` the agent does, over the SSE
+heartbeat, so the browser and the agent can never disagree about bedtime. It is
+also deliberately not dismissable by touch.
 
 ---
 
