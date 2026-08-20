@@ -65,6 +65,17 @@ def run_fast_sync() -> None:
     sync_kinds(FAST_KINDS)
 
 
+def heartbeat_data() -> dict:
+    """The server's date and clock, as the panel receives them.
+
+    Separate from the job that publishes it because the stream route sends one
+    on connect too - a panel that has just loaded should not have to wait up
+    to a full interval to learn what time it is.
+    """
+    now = datetime.now(ZoneInfo(settings.home_timezone))
+    return {"today": now.date().isoformat(), "now": now.isoformat()}
+
+
 def run_heartbeat() -> None:
     """Tell the panel the stream is alive, and what day it is.
 
@@ -75,8 +86,7 @@ def run_heartbeat() -> None:
     than letting the browser read its own clock keeps the panel's OS timezone
     out of it, the same way format.ts and /api/calendar already do.
     """
-    now = datetime.now(ZoneInfo(settings.home_timezone))
-    broadcaster.publish("heartbeat", {"today": now.date().isoformat(), "now": now.isoformat()})
+    broadcaster.publish("heartbeat", heartbeat_data())
 
 
 def run_weather_refresh() -> None:

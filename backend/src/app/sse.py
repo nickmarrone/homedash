@@ -27,11 +27,20 @@ class SSEBroadcaster:
             self._subscribers.discard(queue)
 
     def publish(self, event_type: str, data: dict | None = None) -> None:
-        message = {"event": event_type, "data": json.dumps(data or {})}
+        message = format_message(event_type, data)
         if self._loop is None:
             return
         for queue in list(self._subscribers):
             self._loop.call_soon_threadsafe(queue.put_nowait, message)
+
+
+def format_message(event_type: str, data: dict | None = None) -> dict:
+    """One SSE message, in the shape EventSourceResponse expects.
+
+    Shared with the stream route, which sends a heartbeat of its own the
+    moment a panel connects rather than making it wait for the scheduler's.
+    """
+    return {"event": event_type, "data": json.dumps(data or {})}
 
 
 broadcaster = SSEBroadcaster()

@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.serializers import serialize_instance
+from app.astro import astro_summary
 from app.calendars.grid import (
     VIEWS,
     GridItem,
@@ -22,7 +23,8 @@ from app.config import get_settings
 from app.db import get_session
 from app.devices import screen_state, touch_last_seen
 from app.models import CalendarSource, Device, Event, EventInstance
-from app.sse import broadcaster
+from app.scheduler import heartbeat_data
+from app.sse import broadcaster, format_message
 from app.weather.client import get_cached_weather
 
 router = APIRouter()
@@ -90,7 +92,8 @@ def get_calendar(
         )
 
     tz = ZoneInfo(settings.home_timezone)
-    today = datetime.now(tz).date()
+    now = datetime.now(tz)
+    today = now.date()
     try:
         requested = date.fromisoformat(anchor) if anchor else today
     except ValueError:
@@ -118,6 +121,13 @@ def get_calendar(
         "anchor": anchor_date.isoformat(),
         "title": period_title(view, anchor_date, week_starts_on),
         "today": today.isoformat(),
+        # The server's clock, alongside the events it is being used to judge.
+        # The panel greys out what has already finished, and it cannot ask its
+        # own clock for that - the same rule the rest of this file follows.
+        # Riding on this response rather than waiting for the next SSE
+        # heartbeat is what stops a freshly loaded panel from showing a
+        # morning of finished appointments at full strength for half a minute.
+        "now": now.isoformat(),
         "prev_anchor": step_anchor(view, anchor_date, -1).isoformat(),
         "next_anchor": step_anchor(view, anchor_date, 1).isoformat(),
         "days": build_days(items, first, last, anchor_date, view, today),
@@ -198,15 +208,43 @@ def get_device_screen(device_id: int, session: SessionDep) -> dict:
 
 @router.get("/api/weather")
 def get_weather() -> dict:
-    return get_cached_weather() or {}
+    """The weather cache, plus the sky.
+
+    The astronomy is computed here rather than folded into the cache on
+    refresh, precisely so it does not share the weather's fate: it needs no
+    network, and Open-Meteo being unreachable should not also take the moon
+    off the panel. It is a few dozen floating-point operations - cheaper than
+    serializing the forecast it travels with.
+    """
+    return {
+        **(get_cached_weather() or {}),
+        "astro": astro_summary(
+            datetime.now(timezone.utc),
+            settings.weather_latitude,
+            ZoneInfo(settings.home_timezone),
+        ),
+    }
+
+
+async def event_stream(request: Request):
+    """The SSE message stream for one connected panel.
+
+    A named generator rather than a closure so it can be driven directly in a
+    test: an HTTP-level test of a stream that never ends has to be unwound
+    carefully, and gets no closer to what actually matters here.
+    """
+    # A heartbeat before anything else. The panel greys out events that have
+    # already finished and reads the day's date off this stream, and it must
+    # not use its own clock for either - so a freshly connected panel would
+    # otherwise be flying blind until the scheduler's next heartbeat, up to 30
+    # seconds later.
+    yield format_message("heartbeat", heartbeat_data())
+    async for message in broadcaster.subscribe():
+        if await request.is_disconnected():
+            break
+        yield message
 
 
 @router.get("/api/events/stream")
 async def stream_events(request: Request) -> EventSourceResponse:
-    async def event_generator():
-        async for message in broadcaster.subscribe():
-            if await request.is_disconnected():
-                break
-            yield message
-
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_stream(request))

@@ -167,3 +167,56 @@ class TestWeekStart:
         payload = client.get("/api/calendar?view=week&anchor=2026-08-19").json()
         assert payload["days"][0]["date"] == "2026-08-17"
         assert payload["days"][0]["weekday_short"] == "Mon"
+
+
+class TestWeatherEndpoint:
+    """The sky rides along with the forecast, but does not depend on it."""
+
+    def test_the_moon_is_served_when_the_weather_cache_is_empty(self, client, monkeypatch):
+        """Open-Meteo being unreachable must not also take the moon off the
+        panel. The astronomy needs no network, so an outage that empties the
+        weather cache should still leave a populated astro block - otherwise a
+        failed fetch looks like a broken panel rather than a missing forecast.
+        """
+        monkeypatch.setattr(routes_module, "get_cached_weather", lambda: None)
+
+        payload = client.get("/api/weather").json()
+
+        assert payload["astro"]["moon"]["phase"]
+        assert "illumination" in payload["astro"]["moon"]
+        assert "current" not in payload
+
+    def test_the_cache_is_passed_through_alongside_it(self, client, monkeypatch):
+        monkeypatch.setattr(
+            routes_module, "get_cached_weather", lambda: {"current": {"temperature_2m": 71.0}}
+        )
+
+        payload = client.get("/api/weather").json()
+
+        assert payload["current"]["temperature_2m"] == 71.0
+        assert "events" in payload["astro"]
+
+    def test_events_are_dated_in_the_home_timezone(self, client):
+        """The endpoint's job is to hand the panel local calendar dates - the
+        panel does no date arithmetic of its own."""
+        payload = client.get("/api/weather").json()
+
+        for event in payload["astro"]["events"]:
+            assert len(event["date"]) == 10
+            assert event["kind"] in {"moon", "meteor_shower", "season"}
+
+
+class TestCalendarClock:
+    def test_the_grid_carries_the_servers_clock(self, client):
+        """The panel dims events that have already finished, and must not read
+        its own clock to decide which. Carrying `now` on the response that
+        delivered the events means a freshly loaded panel dims them on the
+        first render, instead of showing a whole morning of finished
+        appointments at full strength until the next SSE heartbeat lands up to
+        30 seconds later.
+        """
+        payload = client.get("/api/calendar?view=week").json()
+
+        assert payload["now"].startswith(payload["today"])
+        # Home timezone, not UTC - the same instants the events carry.
+        assert payload["now"].endswith(("-04:00", "-05:00"))

@@ -4,10 +4,12 @@ Its job is twofold: prove to the panel that the stream is alive, and tell it
 what day it is. Both matter only on a display that stays open for months.
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
+from app.api.routes import event_stream
 from app.config import Settings
 import app.scheduler as scheduler_module
 
@@ -71,3 +73,32 @@ class TestScheduling:
         frontend/src/lib/watchdog.ts). Keep this interval comfortably under a
         third of that, or a single slow beat becomes a reload."""
         assert scheduler_module.HEARTBEAT_SECONDS <= 30
+
+
+class TestHeartbeatOnConnect:
+    """A panel must not have to wait for the scheduler to learn the time."""
+
+    def test_the_stream_opens_with_a_heartbeat(self):
+        """The panel greys out finished events and reads the date off this
+        stream, using the server's clock rather than its own. Without an
+        immediate heartbeat a freshly loaded panel is flying blind until the
+        next scheduled one, up to 30 seconds later - which is exactly long
+        enough to be seen as a bug.
+        """
+
+        class NeverDisconnects:
+            async def is_disconnected(self):
+                return False
+
+        async def first_message():
+            stream = event_stream(NeverDisconnects())
+            try:
+                return await anext(stream)
+            finally:
+                await stream.aclose()
+
+        message = asyncio.run(first_message())
+
+        assert message["event"] == "heartbeat"
+        payload = json.loads(message["data"])
+        assert payload["now"].startswith(payload["today"])
