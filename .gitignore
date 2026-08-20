@@ -16,7 +16,10 @@ frontend/dist/
 *.db
 *.db-journal
 backend/data/
-photos/
+# Anchored to the repo root on purpose: a bare `photos/` also matches
+# backend/src/app/photos/, which is source code.
+/photos/
+backend/photo-cache/
 
 # Env
 .env

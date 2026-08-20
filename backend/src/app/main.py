@@ -11,7 +11,8 @@ from app.calendars.sync import seed_calendars_from_settings
 from app.devices import seed_device_from_settings
 from app.config import get_settings
 from app.db import engine, run_migrations
-from app.scheduler import start_scheduler, stop_scheduler
+from app.photos.observer import start_folder_watch
+from app.scheduler import run_photo_index, start_scheduler, stop_scheduler
 from app.sse import broadcaster
 from app.weather.client import refresh_weather
 
@@ -28,7 +29,13 @@ async def lifespan(app: FastAPI):
     broadcaster.bind_loop(asyncio.get_running_loop())
     await asyncio.get_running_loop().run_in_executor(None, refresh_weather)
     start_scheduler()
+    # After the scheduler, so the first full scan is already queued: the watch
+    # only reports what changes from here on, and a folder that was filled while
+    # the container was down would otherwise wait for the interval to be seen.
+    watch = start_folder_watch(settings.photos_dir, run_photo_index)
     yield
+    if watch is not None:
+        watch.stop()
     stop_scheduler()
 
 

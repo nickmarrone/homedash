@@ -109,3 +109,39 @@ class Device(SQLModel, table=True):
     # future settings UI will be writing to.
     screen_schedule: str
     last_seen: datetime | None = None
+
+
+class Photo(SQLModel, table=True):
+    """One indexed image the screensaver can show.
+
+    `path` is relative to HOMEDASH_PHOTOS_DIR, so moving or remounting the
+    folder does not orphan the whole index.
+
+    `size` and `mtime_ns` are the cheap change check. Re-hashing every file on
+    every rescan is pointless I/O on a folder that changes a few times a year;
+    an unchanged pair short-circuits before the file is even opened. `hash` is
+    then the derivative's cache key, so a photo replaced in place gets fresh
+    derivatives rather than a stale one, and it is what the image URL's `v`
+    parameter carries - which is what makes those URLs immutably cacheable.
+
+    `error` records why a file could not be decoded. The row still exists so
+    the size/mtime fast path suppresses the retry; without it a corrupt file
+    would be reopened on every rescan forever. Rows with an error are excluded
+    from the playlist.
+    """
+
+    __tablename__ = "photos"
+
+    id: int | None = Field(default=None, primary_key=True)
+    path: str = Field(index=True, unique=True)
+    hash: str = ""
+    width: int = 0
+    height: int = 0
+    # "landscape", "portrait", or "square". Derived from width and height at
+    # index time and stored, so the playlist query does not have to compute it
+    # per row on every request.
+    orientation: str = ""
+    size: int = 0
+    mtime_ns: int = 0
+    error: str | None = None
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

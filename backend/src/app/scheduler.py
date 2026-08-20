@@ -9,6 +9,7 @@ from app.calendars.sync import sync_source
 from app.config import get_settings
 from app.db import engine
 from app.models import CalendarSource
+from app.photos.index import reindex
 from app.sse import broadcaster
 from app.comets import refresh_comet_elements
 from app.weather.client import refresh_weather
@@ -107,6 +108,22 @@ def run_comet_refresh() -> None:
         logger.exception("Comet element refresh failed")
 
 
+def run_photo_index() -> None:
+    """Rescan the photo folder.
+
+    This is the backstop, not the fast path: the filesystem observer in
+    main.py picks up a dropped-in photo within seconds. It exists because
+    inotify sees nothing when a folder is filled from the far side of an SMB
+    or NFS mount, which is how a /photos share is very often populated.
+    """
+    try:
+        with Session(engine) as session:
+            if reindex(session):
+                broadcaster.publish("photos.updated")
+    except Exception:
+        logger.exception("Photo index failed")
+
+
 def run_weather_refresh() -> None:
     try:
         if refresh_weather():
@@ -145,6 +162,13 @@ def start_scheduler() -> None:
             id="comet_refresh",
             next_run_time=datetime.now(),
         )
+    scheduler.add_job(
+        run_photo_index,
+        "interval",
+        minutes=settings.photo_index_interval_minutes,
+        id="photo_index",
+        next_run_time=datetime.now(),
+    )
     scheduler.add_job(
         run_weather_refresh,
         "interval",

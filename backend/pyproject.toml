@@ -21,6 +21,7 @@ dependencies = [
     "sse-starlette>=3.4.8",
     "tzdata>=2026.3",
     "uvicorn[standard]>=0.52.3",
+    "watchdog>=6.0.0",
 ]
 
 [project.scripts]

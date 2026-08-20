@@ -43,6 +43,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `api/routes.py` | Every HTTP endpoint, on one `APIRouter` |
 | `api/serializers.py` | `serialize_instance` — the shared event wire shape |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
+| `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
 | `weather/client.py` | Open-Meteo fetch and its in-process cache |
 | `cli/` | One-off operator commands (`homedash-google-auth`, `homedash-inspect-calendars`) |
 
@@ -70,6 +71,32 @@ change?". When something did, that source's rows are deleted and rebuilt wholesa
 Incremental upserts would mean rewriting the materialization path, which is where sync
 bugs live, to save rebuilding a few hundred rows.
 
+### `photos/`
+
+| Module | Responsibility |
+|---|---|
+| `base.py` | `PhotoSource` protocol and `SourcePhoto` — the Immich seam |
+| `folder.py` | `FolderPhotoSource`: a recursive walk of `HOMEDASH_PHOTOS_DIR` |
+| `derivatives.py` | The only module that touches Pillow. Sizes, slots, and rendering |
+| `index.py` | `reindex(session)` — reconcile the table and the derivative cache |
+| `observer.py` | Debounced filesystem watch, so a dropped-in photo appears in seconds |
+
+**Two derivatives per photo, one per way the panel can be mounted.** For a given panel
+orientation a photo either agrees with it (fills the screen, 1920x1080 or 1080x1920) or
+disagrees (takes half, 960x1080 or 1080x960, and is paired with another). Pairing rather
+than letterboxing, because a black bar down the side of a wall panel reads as a fault.
+
+Derivative filenames are content-addressed (`{hash}-{w}x{h}.jpg`), which is what lets the
+image endpoint mark them `immutable` — a photo rewritten in place changes its URL.
+
+`ImageOps.exif_transpose` runs **before** anything else. Phones record orientation in EXIF
+rather than rotating pixels, so skipping it shows a large fraction of any real library
+sideways *and* crops along the wrong axis.
+
+Orphaned derivatives are removed by a **sweep** at the end of each scan, not by unlinking
+alongside each deleted row: two copies of one photo hash identically and share derivative
+files, so per-row unlinking would blank the surviving copy.
+
 ### Lifespan ordering — `main.py`
 
 ```
@@ -79,6 +106,7 @@ run_migrations()
   → broadcaster.bind_loop(running loop)        SSE publishes are no-ops before this
   → refresh_weather() in a thread executor     blocking HTTP, kept off the event loop
   → start_scheduler()
+  → start_folder_watch(photos_dir, …)         after the scheduler, so the first scan is queued
 ```
 
 The frontend is mounted last, at `/`, with `html=True`. Starlette matches in registration
@@ -95,6 +123,7 @@ unreachable.
 | `event_instances` | id, event_id, member_id, starts_at (indexed), ends_at, all_day, title, location | Materialized recurrence expansion over a rolling window |
 | `settings` | key, value | Generic KV. **Currently unused**; available for runtime-mutable state |
 | `devices` | id, name, screen_schedule, last_seen | One row, id 1. `screen_schedule` is JSON text, not columns |
+| `photos` | id, path (unique), hash, width, height, orientation, size, mtime_ns, error, added_at | `size`/`mtime_ns` skip re-hashing an unchanged file; `error` keeps a broken file from being retried forever |
 
 No SQLModel `Relationship` attributes anywhere — joins are written explicitly in queries.
 No DB-level cascades either; child rows are deleted by hand in the reconcilers.
@@ -130,6 +159,7 @@ check-in, throttled to at most one write a minute. It is deliberately non-idempo
 | `ics_sync` | `ics_poll_interval_minutes` (15) | `events.updated` if changed |
 | `fast_sync` | `fast_poll_interval_minutes` (1) | `events.updated` if changed |
 | `heartbeat` | 30 seconds | `heartbeat` with `{today, now}` |
+| `photo_index` | `photo_index_interval_minutes` (15) | `photos.updated` if changed |
 | `weather_refresh` | `weather_cache_minutes` (20) | `weather.updated` if changed |
 
 Every job: `next_run_time=datetime.now()` so it fires at boot rather than after one full
@@ -147,7 +177,7 @@ safe to call from APScheduler threads** (`loop.call_soon_threadsafe`); it silent
 before `bind_loop`. No per-subscriber filtering and no replay — every panel gets every
 event.
 
-Events: `events.updated`, `weather.updated`, `heartbeat`.
+Events: `events.updated`, `weather.updated`, `photos.updated`, `heartbeat`.
 
 The heartbeat is a *named* event rather than sse-starlette's ping, because a ping is an SSE
 comment and `EventSource` never surfaces comments to `addEventListener` — so it could not
