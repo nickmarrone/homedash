@@ -185,6 +185,13 @@ needs rebuilding or its far edge slowly empties out. And it is the only thing th
 provider signal that missed a change — which is the bound on how long a deleted event can
 survive on the wall if its calendar never reports the deletion.
 
+A rebuild materializes what the calendar currently holds, so anything the source stops
+serving disappears with it. The exception is an event the source keeps serving while
+marking it `STATUS:CANCELLED` — how CalDAV servers and ICS exports report a meeting the
+organizer called off, including a single occurrence dropped out of a series. Those are
+filtered out at materialization time, since a rebuild would otherwise re-create them
+faithfully every hour, forever.
+
 ---
 
 ## Weather
@@ -320,7 +327,6 @@ list.
 | `HOMEDASH_WEEK_STARTS_ON` | `sunday` | first column of the week and month views |
 | `HOMEDASH_ICS_POLL_INTERVAL_MINUTES` | `15` | ICS poll cadence |
 | `HOMEDASH_FAST_POLL_INTERVAL_MINUTES` | `1` | CalDAV/Google poll cadence |
-| `HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES` | `60` | forced full re-fetch, whatever change detection says |
 | `HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES` | `60` | forced full re-fetch, whatever change detection says |
 | `HOMEDASH_SYNC_WINDOW_PAST_DAYS` | `30` | how far back instances are materialized |
 | `HOMEDASH_SYNC_WINDOW_FUTURE_DAYS` | `365` | how far forward |

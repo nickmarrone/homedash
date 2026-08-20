@@ -84,6 +84,19 @@ stayed on the wall. That specific bug is fixed in `google_source.py`, but the cl
 a provider signal that misses a change, with nothing to notice — is what the hourly rebuild
 bounds.
 
+**Deletions the rebuild cannot see for itself.** Re-fetching harder does not help with
+these — the row survives precisely *because* the rebuild ran:
+
+* **`STATUS:CANCELLED`.** Every other deletion is an *absence* — the event stops arriving,
+  and a rebuild from what did arrive drops it. A cancelled event is the opposite: the
+  source keeps serving it as a tombstone, so each rebuild re-materializes an appointment
+  somebody already called off, and the hourly resync re-creates it rather than clearing
+  it. `_is_cancelled()` filters both masters and expanded occurrences, which covers a
+  cancelled single event, a whole cancelled series, and one occurrence dropped from a
+  series by a `RECURRENCE-ID` override. `google_source.py` drops cancelled items before
+  they reach here; this is what gives ICS and CalDAV the same guarantee. `TENTATIVE` is
+  kept — an unconfirmed appointment is still an appointment.
+
 ### `photos/`
 
 | Module | Responsibility |

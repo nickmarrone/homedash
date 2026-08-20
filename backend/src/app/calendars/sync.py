@@ -37,6 +37,34 @@ def _delete_source_events(session: Session, source_id: int) -> None:
     session.flush()
 
 
+CANCELLED = "CANCELLED"
+
+
+def _is_cancelled(component) -> bool:
+    """Whether a VEVENT, or one expanded occurrence of one, is called off.
+
+    RFC 5545's `STATUS:CANCELLED` is how a calendar says "this is not
+    happening" *while still serving the event*, and it is the one kind of
+    deletion a wholesale rebuild cannot see for itself: the VEVENT is still
+    in the feed, so rebuilding from it faithfully re-materializes an
+    appointment nobody is going to, and it survives every forced full resync
+    because the source keeps handing it back.
+
+    Both CalDAV servers and ICS exports do this - a meeting the organizer
+    cancels stays in the collection as a tombstone rather than disappearing -
+    and `recurring_ical_events` propagates the status onto every occurrence
+    it expands, so this one check covers a cancelled single event, a whole
+    cancelled series, and a single occurrence cancelled by a RECURRENCE-ID
+    override. Google's own adapter drops cancelled items before they get
+    here; this is what gives the other two kinds the same guarantee.
+
+    Only CANCELLED is filtered. TENTATIVE is a real appointment somebody has
+    not confirmed yet, and belongs on the wall.
+    """
+    status = component.get("STATUS")
+    return status is not None and str(status).strip().upper() == CANCELLED
+
+
 GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/{}/events"
 
 
@@ -242,6 +270,11 @@ def sync_source(session: Session, source: CalendarSource) -> bool:
 
     events_by_uid: dict[str, Event] = {}
     for vevent in vevents:
+        # A cancelled master gets no row at all. Its occurrences are dropped
+        # below in any case; keeping the row would leave the events table
+        # claiming a calendar has something it does not.
+        if _is_cancelled(vevent):
+            continue
         uid = str(vevent.get("UID"))
         event = Event(
             source_id=source.id,
@@ -253,6 +286,10 @@ def sync_source(session: Session, source: CalendarSource) -> bool:
         events_by_uid[uid] = event
 
     for occurrence in occurrences:
+        # The occurrence, not the master: a RECURRENCE-ID override cancels a
+        # single Tuesday out of a series that is otherwise still running.
+        if _is_cancelled(occurrence):
+            continue
         uid = str(occurrence.get("UID"))
         event = events_by_uid.get(uid)
         if event is None or event.id is None:

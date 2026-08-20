@@ -21,8 +21,8 @@ from app.config import Settings
 from app.models import CalendarSource, Event, EventInstance
 
 
-def vevents(*uids: str) -> list:
-    """VEVENT masters for one timed event per uid, all inside the window.
+def anchor() -> datetime:
+    """A start time comfortably inside the materialization window.
 
     Anchored to the clock rather than written as a literal date. The
     materialization window is measured from `now` and rolls forward with it,
@@ -30,18 +30,59 @@ def vevents(*uids: str) -> list:
     real time has passed - and every assertion about which titles survived a
     sync then reads empty, blaming the reconciler for the calendar.
     """
-    start = datetime.now(timezone.utc) + timedelta(days=1)
-    starts_at = start.strftime("%Y%m%dT%H0000Z")
-    ends_at = (start + timedelta(hours=1)).strftime("%Y%m%dT%H0000Z")
-    body = "".join(
-        f"BEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:{uid}\r\n"
-        f"DTSTART:{starts_at}\r\nDTEND:{ends_at}\r\nEND:VEVENT\r\n"
-        for uid in uids
+    return (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+        minute=0, second=0, microsecond=0
     )
+
+
+def _stamp(value: datetime) -> str:
+    return value.strftime("%Y%m%dT%H%M%SZ")
+
+
+def _parse(body: str) -> list:
     calendar = Calendar.from_ical(
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n" + body + "END:VCALENDAR\r\n"
     )
     return list(calendar.walk("VEVENT"))
+
+
+def _block(uid: str, start: datetime, *extra: str) -> str:
+    return (
+        f"BEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:{uid}\r\n"
+        f"DTSTART:{_stamp(start)}\r\nDTEND:{_stamp(start + timedelta(hours=1))}\r\n"
+        + "".join(f"{line}\r\n" for line in extra)
+        + "END:VEVENT\r\n"
+    )
+
+
+def vevents(*uids: str, status: str | None = None) -> list:
+    """VEVENT masters for one timed event per uid, all inside the window.
+
+    `status` sets STATUS on every one of them - CANCELLED is how a calendar
+    keeps serving an event it has called off.
+    """
+    extra = (f"STATUS:{status}",) if status else ()
+    return _parse("".join(_block(uid, anchor(), *extra) for uid in uids))
+
+
+def series(uid: str, count: int = 3, *, status: str | None = None, cancel: int | None = None):
+    """A weekly series, optionally with one occurrence cancelled.
+
+    `cancel` is the zero-based index of an occurrence to call off with a
+    RECURRENCE-ID override - which is how a CalDAV server reports "not this
+    Tuesday" when the client writes an override instead of an EXDATE.
+    """
+    start = anchor()
+    extra = [f"RRULE:FREQ=WEEKLY;COUNT={count}"]
+    if status:
+        extra.append(f"STATUS:{status}")
+    body = _block(uid, start, *extra)
+    if cancel is not None:
+        moment = start + timedelta(weeks=cancel)
+        body += _block(
+            uid, moment, f"RECURRENCE-ID:{_stamp(moment)}", "STATUS:CANCELLED"
+        )
+    return _parse(body)
 
 
 class FakeAdapter:
@@ -159,4 +200,103 @@ class TestDeletion:
 
         assert adapter.fetched_with_force is True
         assert rewritten is True
+        assert titles(session) == ["dentist"]
+
+
+def starts(session: Session) -> list[datetime]:
+    return sorted(i.starts_at for i in session.exec(select(EventInstance)).all())
+
+
+class TestCancelled:
+    """A calendar that says an event is off, without removing it.
+
+    This is the deletion a wholesale rebuild cannot see for itself. Every
+    other kind of deletion is an absence: the event stops arriving, and
+    rebuilding from what did arrive drops it. `STATUS:CANCELLED` is the
+    opposite - the source keeps serving the event, so every rebuild
+    faithfully re-materializes it and the forced full resync that exists to
+    catch missed deletions re-creates the row instead of clearing it. On the
+    wall that is an appointment somebody already cancelled, showing forever.
+    """
+
+    def test_a_cancelled_event_never_reaches_the_panel(self, session, source, serve):
+        serve(vevents("dentist") + vevents("soccer", status="CANCELLED"))
+        sync_module.sync_source(session, source)
+
+        assert titles(session) == ["dentist"]
+
+    def test_an_event_cancelled_after_it_was_synced_stops_showing(
+        self, session, source, serve
+    ):
+        """The headline: it was on the wall, it got cancelled, it must go."""
+        serve(vevents("dentist", "soccer"))
+        sync_module.sync_source(session, source)
+        assert titles(session) == ["dentist", "soccer"]
+
+        serve(vevents("dentist") + vevents("soccer", status="CANCELLED"))
+        sync_module.sync_source(session, source)
+
+        assert titles(session) == ["dentist"]
+
+    def test_the_forced_resync_clears_one_the_change_signal_missed(
+        self, session, source, serve, monkeypatch
+    ):
+        """Tied to HOMEDASH_FULL_RESYNC_INTERVAL_MINUTES on purpose.
+
+        A cancellation the provider's sync signal never reported has only one
+        thing left to catch it, and a full resync that re-materializes the
+        tombstone is not a backstop at all.
+        """
+        serve(vevents("dentist", "soccer"))
+        sync_module.sync_source(session, source)
+
+        monkeypatch.setattr(
+            sync_module, "settings", Settings(_env_file=None, full_resync_interval_minutes=60)
+        )
+        source.last_full_sync_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        serve(vevents("dentist") + vevents("soccer", status="CANCELLED"), changed=False)
+        sync_module.sync_source(session, source)
+
+        assert titles(session) == ["dentist"]
+
+    def test_no_event_row_survives_for_a_cancelled_event(self, session, source, serve):
+        """The parent row goes too. Leaving it behind would have the events
+        table claiming a calendar holds something it does not."""
+        serve(vevents("dentist") + vevents("soccer", status="CANCELLED"))
+        sync_module.sync_source(session, source)
+
+        assert [e.uid for e in session.exec(select(Event)).all()] == ["dentist"]
+
+    def test_a_cancelled_series_goes_entirely(self, session, source, serve):
+        serve(series("soccer", 3, status="CANCELLED"))
+        sync_module.sync_source(session, source)
+
+        assert titles(session) == []
+
+    def test_one_cancelled_occurrence_leaves_the_rest_of_the_series(
+        self, session, source, serve
+    ):
+        """A RECURRENCE-ID override cancels a single Tuesday. The other
+        Tuesdays are still soccer practice."""
+        serve(series("soccer", 3, cancel=1))
+        sync_module.sync_source(session, source)
+
+        first = anchor()
+        assert [s.replace(tzinfo=timezone.utc) for s in starts(session)] == [
+            first,
+            first + timedelta(weeks=2),
+        ]
+
+    def test_a_tentative_event_still_shows(self, session, source, serve):
+        """Only CANCELLED is filtered: an unconfirmed appointment is still an
+        appointment, and dropping it would hide half an invitation list."""
+        serve(vevents("maybe-lunch", status="TENTATIVE"))
+        sync_module.sync_source(session, source)
+
+        assert titles(session) == ["maybe-lunch"]
+
+    def test_a_confirmed_event_is_untouched(self, session, source, serve):
+        serve(vevents("dentist", status="CONFIRMED"))
+        sync_module.sync_source(session, source)
+
         assert titles(session) == ["dentist"]
