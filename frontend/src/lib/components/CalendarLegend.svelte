@@ -60,7 +60,10 @@
 		flex-wrap: wrap;
 		gap: 0.5rem;
 		list-style: none;
-		margin: 1rem 0 0;
+		/* No margin of its own: it sits in a centre-aligned row beside the view
+		   switcher, and a top margin there offsets the chips below the
+		   switcher's centre line. Spacing is the row's to give. */
+		margin: 0;
 		padding: 0;
 	}
 

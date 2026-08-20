@@ -203,8 +203,13 @@
 	/>
 	<HourlyForecast {weather} />
 	<div class="controls">
-		<ViewSwitcher {view} onSelect={selectView} />
 		<CalendarLegend {calendars} hidden={hiddenCalendars} onToggle={toggleCalendar} />
+		<!-- Pushed right by its own margin rather than by justify-content, so it
+		     still sits against the right edge on a single-calendar panel, where
+		     the legend renders nothing at all. -->
+		<div class="switcher-slot">
+			<ViewSwitcher {view} onSelect={selectView} />
+		</div>
 	</div>
 
 	{#if view === 'agenda'}
@@ -269,6 +274,10 @@
 		align-items: center;
 		gap: 1rem;
 		margin-top: 1rem;
+	}
+
+	.switcher-slot {
+		margin-left: auto;
 	}
 
 	.upcoming {
