@@ -6,9 +6,9 @@ See `CLAUDE.md` for the full phased implementation plan.
 
 ## Status
 
-**Phases 1 and 2 are done.** Real calendar sync from ICS, CalDAV, and Google Calendar;
+**Phases 1 to 3 are done.** Real calendar sync from ICS, CalDAV, and Google Calendar;
 Open-Meteo weather; agenda, day, week, and month views; live updates over SSE — all served
-from one Docker image.
+from one Docker image — plus a locked-down Raspberry Pi wall panel with a screen schedule.
 
 HomeDash is **read-only by design**. It never writes to your calendars. Edit events on your
 phone the way you already do, and they sync down to the panel.
@@ -18,6 +18,7 @@ phone the way you already do, and they sync down to the panel.
 ```
 backend/    FastAPI + SQLModel + Alembic + APScheduler (Python 3.12, uv)
 frontend/   SvelteKit (adapter-static) - compiles to static files the backend serves
+deploy/pi/  Provisioning for the Raspberry Pi that hangs on the wall
 ```
 
 ---
@@ -151,8 +152,15 @@ panel, in browser local storage, and survives reboots.
 events render as solid banners and sort above timed events within a day. An event spanning
 several days appears on each of them.
 
+**Either way up.** Mounted in portrait, the panel stacks the agenda underneath the calendar
+and gives the week view one column per day instead of seven side by side. This follows the
+physical rotation with no setting to change.
+
 **Updating.** The panel never needs a manual refresh. The backend pushes changes over SSE as
-soon as a sync notices them.
+soon as a sync notices them. A heartbeat every 30 seconds carries the server's date, so the
+display rolls over at midnight even on a day when nothing else changes, and the page reloads
+itself if that heartbeat stops — a silently frozen display is the number one kiosk failure
+mode.
 
 ---
 
@@ -207,6 +215,8 @@ list.
 | `HOMEDASH_WEATHER_LATITUDE` / `_LONGITUDE` | `0` | home coordinates |
 | `HOMEDASH_WEATHER_TEMPERATURE_UNIT` | `fahrenheit` | `fahrenheit` or `celsius` |
 | `HOMEDASH_WEATHER_CACHE_MINUTES` | `20` | weather refresh cadence |
+| `HOMEDASH_SCREEN_SCHEDULE` | `{"on": "06:30", "off": "21:30"}` | when the wall panel's screen is lit |
+| `HOMEDASH_DEVICE_NAME` | `panel` | name stored on the panel's `devices` row |
 
 `HOMEDASH_ICS_CALENDARS` still works as a deprecated alias for `HOMEDASH_CALENDARS`; it logs a
 warning at startup and its entries default to `kind: "ics"`.
@@ -250,6 +260,35 @@ OS clock is deliberately not used anywhere, so the host's timezone should make n
 
 **An all-day event shows on the wrong day.** This was a real bug fixed in Phase 2; make sure
 you are not running an older image.
+
+---
+
+## Putting it on the wall
+
+The Pi is a thin client: HomeDash keeps running wherever your containers run, and the Pi
+runs only a browser and a small screen agent. Everything it needs is in
+[`deploy/pi/`](deploy/pi/README.md):
+
+```bash
+# on a Raspberry Pi running Raspberry Pi OS Lite (64-bit)
+git clone https://github.com/nickmarrone/homedash.git
+cd homedash
+sudo deploy/pi/setup.sh --server http://homedash.local:8000 --orientation portrait
+sudo systemctl start homedash-kiosk homedash-screen
+```
+
+That gives you console autologin into labwc, Chromium in kiosk mode with an enterprise
+policy that blocks every URL but HomeDash, and a systemd-managed agent applying
+`HOMEDASH_SCREEN_SCHEDULE`.
+
+**One step is left to you deliberately.** The screen agent starts in `--dry-run`, because on
+a Pi 5 there is no way to know in advance how a given monitor blanks: `vcgencmd
+display_power` was removed with the move to Wayland, `/sys/class/backlight` exists only for
+the official DSI panel, and portable USB-C monitors disagree about whether they honour the
+compositor's power management at all. Run `homedash-screen-agent probe` on the Pi, see which
+mechanism actually darkens your display, and set it. The full walkthrough, including the
+touch-rotation check and the read-only filesystem, is in
+[`deploy/pi/README.md`](deploy/pi/README.md).
 
 ---
 

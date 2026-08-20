@@ -1,0 +1,21 @@
+{
+  "_comment": "Installed to /etc/chromium/policies/managed/homedash.json by setup.sh. This is the layer most kiosk guides skip and the strongest one: even a successful escape from kiosk mode cannot load anything but HomeDash.",
+  "URLBlocklist": ["*"],
+  "URLAllowlist": ["@SERVER_URL@"],
+  "DeveloperToolsAvailability": 2,
+  "IncognitoModeAvailability": 1,
+  "BookmarkBarEnabled": false,
+  "BrowserSignin": 0,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "PrintingEnabled": false,
+  "TranslateEnabled": false,
+  "SafeBrowsingEnabled": false,
+  "MetricsReportingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "ShowHomeButton": false,
+  "RestoreOnStartup": 4
+}

@@ -83,3 +83,29 @@ class Setting(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     value: str
+
+
+class Device(SQLModel, table=True):
+    """A panel on the wall.
+
+    There is exactly one, so this is a configured row seeded from
+    HOMEDASH_SCREEN_SCHEDULE rather than a pairing flow. Its only jobs are the
+    screen schedule and last_seen.
+
+    The data model sketch gave this table a `visible_member_ids` column for
+    per-device calendar filtering. Phase 2 settled that differently: with one
+    shared panel in the kitchen, filtering is a panel-local preference and
+    lives in localStorage (frontend/src/lib/calendarVisibility.ts). Adding the
+    column back is what "Multiple panels with independent filters" in
+    CLAUDE.md would mean.
+    """
+
+    __tablename__ = "devices"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    # ScreenScheduleConfig as JSON. Stored as text rather than as columns so
+    # the shape can gain per-weekday windows without a migration on a table a
+    # future settings UI will be writing to.
+    screen_schedule: str
+    last_seen: datetime | None = None

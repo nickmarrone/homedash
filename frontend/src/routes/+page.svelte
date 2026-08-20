@@ -10,8 +10,11 @@
 		type AgendaItem,
 		type CalendarView,
 		type CalendarViewName,
+		type Heartbeat,
 		type Weather
 	} from '$lib/api';
+	import { createOrientation } from '$lib/orientation.svelte';
+	import { startWatchdog } from '$lib/watchdog';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
 	import AgendaList from '$lib/components/AgendaList.svelte';
@@ -33,6 +36,15 @@
 	// Null means "wherever today is" - the backend resolves it, so no date
 	// arithmetic happens here.
 	let anchor = $state<string | null>(null);
+
+	// The server's date, from the heartbeat. The panel must never read its own
+	// clock for this - see format.ts for the same reasoning about times.
+	let serverToday: string | null = null;
+
+	// Rotating the panel changes what needs fetching, not just how it looks:
+	// portrait shows the agenda under the calendar, so it needs both.
+	const orientation = createOrientation(() => loadEvents());
+	let isPortrait = $derived(orientation.isPortrait);
 
 	let visibleItems = $derived(items.filter((item) => isVisible(item, hiddenCalendars)));
 
@@ -93,8 +105,37 @@
 	}
 
 	function loadEvents() {
+		// In portrait both are on screen at once, so both are fetched. The two
+		// endpoints answer different questions - the grid covers the period
+		// being navigated, the agenda is always "what is coming up next" - so
+		// one cannot be derived from the other.
 		if (view === 'agenda') loadAgenda();
-		else loadGrid();
+		else {
+			loadGrid();
+			if (orientation.isPortrait) loadAgenda();
+		}
+	}
+
+	function reloadEverything() {
+		loadEvents();
+		loadCalendars();
+		loadWeather();
+	}
+
+	function onHeartbeat(heartbeat: Heartbeat) {
+		if (serverToday === heartbeat.today) return;
+		const rolledOver = serverToday !== null;
+		serverToday = heartbeat.today;
+		// A day boundary changes which cell is outlined and which heading reads
+		// "Today", and nothing else would prompt it: events.updated only fires
+		// when a sync actually changes something, so a quiet day would leave an
+		// always-on panel showing yesterday indefinitely. Snap back to today
+		// rather than holding whatever period was last navigated to - nobody is
+		// at the wall at midnight, and the panel should be showing now.
+		if (rolledOver) {
+			anchor = null;
+			reloadEverything();
+		}
 	}
 
 	onMount(() => {
@@ -104,17 +145,29 @@
 		loadCalendars();
 		loadWeather();
 
-		const unsubscribe = subscribeToUpdates((eventType) => {
-			// Calendars are reloaded too: a config change adds or removes a
-			// source, and the legend must follow without a page reload.
-			if (eventType === 'events.updated') {
-				loadEvents();
-				loadCalendars();
+		const watchdog = startWatchdog();
+
+		const unsubscribe = subscribeToUpdates({
+			onMessage: () => watchdog.notify(),
+			onHeartbeat,
+			// The stream dropped and came back, so anything could have changed
+			// while it was gone.
+			onReconnect: reloadEverything,
+			onEvent: (eventType) => {
+				// Calendars are reloaded too: a config change adds or removes a
+				// source, and the legend must follow without a page reload.
+				if (eventType === 'events.updated') {
+					loadEvents();
+					loadCalendars();
+				}
+				if (eventType === 'weather.updated') loadWeather();
 			}
-			if (eventType === 'weather.updated') loadWeather();
 		});
 
-		return unsubscribe;
+		return () => {
+			watchdog.stop();
+			unsubscribe();
+		};
 	});
 </script>
 
@@ -146,6 +199,12 @@
 			<MonthGrid days={visibleDays} />
 		{:else}
 			<DayWeekView days={visibleDays} />
+		{/if}
+		{#if isPortrait}
+			<section class="upcoming">
+				<h2>Coming up</h2>
+				<AgendaList items={visibleItems} />
+			</section>
 		{/if}
 	{/if}
 </main>
@@ -189,5 +248,34 @@
 		align-items: center;
 		gap: 1rem;
 		margin-top: 1rem;
+	}
+
+	.upcoming {
+		margin-top: 1.5rem;
+		border-top: 1px solid rgba(128, 128, 128, 0.3);
+		padding-top: 0.5rem;
+	}
+
+	.upcoming h2 {
+		font-size: 1rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		opacity: 0.6;
+		margin: 0.5rem 0 0;
+	}
+
+	/* Portrait is 1080px wide on the wall panel, so the header's two halves no
+	   longer fit on one line and the generous padding costs real estate the
+	   calendar needs. */
+	@media (orientation: portrait) {
+		main {
+			padding: 1rem 0.75rem 2rem;
+		}
+
+		header {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.5rem;
+		}
 	}
 </style>

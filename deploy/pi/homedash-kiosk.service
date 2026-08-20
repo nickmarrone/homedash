@@ -1,0 +1,33 @@
+[Unit]
+Description=HomeDash wall panel (labwc + Chromium kiosk)
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@KIOSK_USER@
+PAMName=login
+TTYPath=/dev/tty1
+# Hand the compositor a real tty. Without this labwc cannot take the seat and
+# exits immediately with a permissions error that reads like a driver problem.
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+Environment=XDG_RUNTIME_DIR=/run/user/@KIOSK_UID@
+Environment=XDG_SESSION_TYPE=wayland
+Environment=HOME=/home/@KIOSK_USER@
+
+# labwc runs the kiosk script as its startup command, so the browser's
+# lifetime is bounded by the compositor's and there is no ordering race
+# between the two.
+ExecStart=/usr/bin/labwc -s /usr/local/bin/homedash-kiosk-start
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

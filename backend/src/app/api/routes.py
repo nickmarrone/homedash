@@ -20,7 +20,8 @@ from app.calendars.grid import (
 )
 from app.config import get_settings
 from app.db import get_session
-from app.models import CalendarSource, Event, EventInstance
+from app.devices import screen_state, touch_last_seen
+from app.models import CalendarSource, Device, Event, EventInstance
 from app.sse import broadcaster
 from app.weather.client import get_cached_weather
 
@@ -175,6 +176,24 @@ def get_calendars(session: SessionDep) -> list[dict]:
         .order_by(CalendarSource.display_order, CalendarSource.id)
     ).all()
     return [{"id": s.id, "name": s.name, "color": s.color} for s in sources]
+
+
+@router.get("/api/devices/{device_id}/screen")
+def get_device_screen(device_id: int, session: SessionDep) -> dict:
+    """Whether the panel's screen should be on, for the Pi's screen agent.
+
+    A GET that writes `last_seen`, which is not idempotent and is meant to be:
+    the poll *is* the check-in, and a separate heartbeat endpoint would double
+    the request count to learn the same fact. The write is throttled so a
+    30-second poll does not rewrite the row 2900 times a day.
+    """
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail=f"no device with id {device_id}")
+
+    now = datetime.now(timezone.utc)
+    touch_last_seen(session, device, now)
+    return screen_state(device, now, ZoneInfo(settings.home_timezone))
 
 
 @router.get("/api/weather")
