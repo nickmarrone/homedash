@@ -72,6 +72,11 @@ FLAGS=(
   --autoplay-policy=no-user-gesture-required
   --check-for-update-interval=31536000
   --password-store=basic            # don't block on a keyring that may not exist
+  # Both of these open a window of their own on top of the panel, and taking
+  # that window drops the fullscreen the panel started in. They cost nothing
+  # with a throwaway profile and are essential with the snap's persistent one.
+  --no-first-run
+  --no-default-browser-check
 )
 
 # simple mode leaves the window escapable and the desktop reachable, which is
