@@ -10,8 +10,9 @@
 > Phase 3) — but it is no longer blocking: the panel goes dark either way.
 >
 > Everything below Phase 4 is post-v1; what has landed there is recorded under "Landed
-> after v1". The obvious next step is the Immich photo source, which the `PhotoSource`
-> protocol already has a seam for.
+> after v1" — which now includes the first half of the music feature: HEOS playback
+> control, with the Jellyfin library still to come. The other obvious next step is the
+> Immich photo source, which the `PhotoSource` protocol already has a seam for.
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -466,8 +467,9 @@ The panel drifts into a photo slideshow when nobody's using it, and a tap brings
 
 ## Landed after v1
 
-Small changes that are neither a phase nor a future feature. Recorded here so the
-running narrative stays honest about what the panel actually does.
+Work that is not one of the numbered phases — small changes, and the parts of
+post-v1 features that have actually shipped. Recorded here so the running narrative
+stays honest about what the panel actually does.
 
 ### The week starts on Monday (2026-08-20)
 
@@ -494,6 +496,48 @@ Two views between Day and Week: `next3` and `next5`, labelled **3 Day** and **5 
 - Paging steps a whole window, so `›` never re-shows a day just seen, and the existing
   midnight rollover already resets the anchor — which is what keeps a lookahead left on the
   wall meaning "from now".
+
+### HEOS playback control (2026-08-22)
+
+The first half of Jellyfin → HEOS music: the protocol path, with no Jellyfin in it
+yet. It controls whatever the speakers are already playing, which was the point —
+it proves the socket, the pushed events and the reconnect behaviour against real
+hardware before the harder half depends on them.
+
+- **The DLNA question is answered: HEOS native.** See the future-features entry for
+  the reasoning and for what is left to build.
+- **`pyheos` rather than a hand-rolled telnet client.** The protocol has real sharp
+  edges — a serialized command lock, a heartbeat keepalive, reconnect backoff,
+  unsolicited events interleaved with command responses — and a maintained library
+  has already hit all of them. Zero transitive dependencies made it cheap.
+- **Four firsts, each decided rather than drifted into.** The first write path (POST
+  routes, and no auth in front of them). The first long-lived outbound connection (an
+  asyncio task in the lifespan, not an APScheduler job). The first mutable state that
+  is not seeded from config — except there is none, because the speakers hold their
+  own state and it is read back from them. And the audio proxy will be the first
+  streaming response, when the Jellyfin half lands.
+- **Reads and writes degrade differently.** `/api/music/players` answers 200 with
+  `connected: false` while the speakers are asleep, because that is an ordinary cold
+  start and the panel needs something to render. A command sent before the connection
+  is up is refused rather than reporting a success the speaker never heard.
+- **Progress events are dropped.** HEOS emits one per second per playing speaker;
+  forwarding them would wake the panel 3600 times an hour to move a progress bar a
+  pixel. The position rides along on the next real update.
+- **Two defects the backend suite could not have caught,** both found by driving real
+  Chrome against the panel. Album art that fails to load painted the browser's
+  broken-image glyph — the same class of problem as an emoji on a Pi, and just as
+  visible across a kitchen; it now falls back to the placeholder. And keying the
+  now-playing bar on `state === 'play'` made it vanish the instant you paused from
+  it, taking the resume button with it.
+- Music adds no fourth panel state: the bar renders inside the calendar, the overlay
+  sits below the screensaver, and `PanelBlank` still wins over everything. On idle the
+  photos still take over, with the track captioned on top.
+- `homedash-heos-probe` is the `screen_agent.py probe` of this feature — the hardware
+  questions here can only be answered by the hardware.
+
+**Not yet run against real speakers.** Everything above is verified against a fake
+HEOS system and in real Chrome at both orientations. `homedash-heos-probe` is the
+first thing to run on the actual hardware.
 
 ---
 
@@ -532,9 +576,37 @@ notes for why. They come back only if the shape of the household changes:
 
 App-level, distinct from the device lockdown in Phase 3. PIN gate on editing, settings, and member filter changes. Design the permission model in Phase 2 even if the UI lands here.
 
-### Jellyfin → DLNA / HEOS music
+### Jellyfin → HEOS music
 
-Browse a Jellyfin library and push playback to HEOS speakers over DLNA. Likely needs `upnpclient` or similar for device discovery, plus HEOS's own telnet-style CLI protocol on port 1255 for the parts DLNA doesn't cover. Investigate whether HEOS's native protocol is a better target than generic DLNA.
+*(The investigation is settled and the first half has landed — see "HEOS playback
+control" under "Landed after v1". What is left is the Jellyfin half: browse, the
+stream proxy, and the queue.)*
+
+**HEOS's native protocol, not generic DLNA.** It pushes change events down the same
+socket the commands go up, so speaker state arrives without polling; DLNA's equivalent
+would have HomeDash hosting a GENA callback endpoint and renewing subscriptions. HEOS
+also has multiroom grouping, which DLNA has no concept of. `pyheos` implements the
+protocol and has no transitive dependencies, so `upnpclient` is not needed at all.
+
+What remains, and the constraints it has to be built inside:
+
+- **HomeDash must be the stream origin.** Three separate limits force this: HEOS will
+  not fetch a URL over 255 characters (and reports no error when it declines), it will
+  not play `.m3u`/`.pls`, and Jellyfin is removing query-parameter auth entirely in
+  10.13. So HomeDash mints a short opaque token, the speaker fetches
+  `/api/music/s/{token}`, and HomeDash proxies the bytes with a header-authenticated
+  request. Same rule the Immich notes already state: never let the API key reach the
+  client.
+- **HomeDash owns the queue.** `browse/add_to_queue` only accepts ids from HEOS's own
+  browse tree, so an album cannot be handed over in one call. Hold the track list, fire
+  `play_stream` per track, advance on the finished event. This is **not gapless** —
+  roughly a one-second gap between tracks — and cannot be made so this way. The escape
+  hatch, if that turns out to be intolerable on the actual speakers, is routing playback
+  through Jellyfin's DLNA server as a HEOS browse source, which buys a native queue at
+  the cost of mapping two id spaces.
+- Jellyfin browse (artists → albums → tracks), a proxied/cached album-art endpoint, and
+  `MusicBrowser` inside the existing `MusicOverlay`.
+- Then polish: groups, and resume.
 
 ### Chores and rewards
 

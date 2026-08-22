@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { PhotoPlaylist } from '$lib/api';
+	import type { NowPlaying, PhotoPlaylist } from '$lib/api';
 	import { createSlideshow, type Slide } from '$lib/slideshow';
 
 	let {
 		playlist,
+		nowPlaying = null,
 		onDismiss
 	}: {
 		playlist: PhotoPlaylist;
+		/** The track to caption the photos with, or null when nothing is
+		 * playing. Music does not suppress the slideshow - the photos are the
+		 * point of it - so this rides on top instead. */
+		nowPlaying?: NowPlaying | null;
 		onDismiss: () => void;
 	} = $props();
 
@@ -136,9 +141,50 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if nowPlaying?.title}
+		<!-- aria-hidden: the whole overlay is already one dismiss target, and a
+		     caption announced as separate content would only get in the way of
+		     that. -->
+		<div class="track" aria-hidden="true">
+			<span class="song">{nowPlaying.title}</span>
+			{#if nowPlaying.artist}<span class="artist">{nowPlaying.artist}</span>{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
+	.track {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 3rem 2rem 1.75rem;
+		color: #fff;
+		/* A gradient rather than a solid bar: a photo's bottom edge is often
+		   sky or floor, and a hard-edged strip across it reads as a fault on a
+		   wall panel where the slideshow runs for months. */
+		background: linear-gradient(to top, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
+		/* Fixed colours on purpose - this sits on photographs, not on Canvas,
+		   so it does not follow the light/dark theme the rest of the app does. */
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+		pointer-events: none;
+	}
+
+	.song {
+		font-size: 1.4rem;
+		font-weight: 600;
+	}
+
+	.artist {
+		font-size: 1.05rem;
+		opacity: 0.85;
+	}
+
 	.screensaver {
 		position: fixed;
 		inset: 0;

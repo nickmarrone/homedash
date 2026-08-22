@@ -44,10 +44,11 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `api/serializers.py` | `serialize_instance` — the shared event wire shape |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
+| `music/` | The HEOS connection and the speakers the panel controls |
 | `weather/client.py` | Open-Meteo fetch and its in-process cache |
 | `astro.py` | Moon phase, meteor showers, equinoxes — computed, no I/O at all |
 | `comets.py` | MPC orbital elements: fetch, cache, propagate, filter to what is actually visible |
-| `cli/` | One-off operator commands (`homedash-google-auth`, `homedash-inspect-calendars`) |
+| `cli/` | One-off operator commands (`homedash-google-auth`, `homedash-inspect-calendars`, `homedash-heos-probe`) |
 
 ### `calendars/`
 
@@ -134,6 +135,55 @@ Orphaned derivatives are removed by a **sweep** at the end of each scan, not by 
 alongside each deleted row: two copies of one photo hash identically and share derivative
 files, so per-row unlinking would blank the surviving copy.
 
+### `music/`
+
+| Module | Responsibility |
+|---|---|
+| `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
+| `service.py` | The process-wide singleton, and the switch that decides it exists |
+
+**HEOS's own CLI protocol, not DLNA.** HEOS pushes change events down the same
+socket the commands go up, so a speaker's state arrives unprompted and turns
+straight into an SSE publish. The DLNA equivalent (GENA) would have HomeDash
+hosting a NOTIFY callback endpoint and renewing subscriptions, or polling
+`GetPositionInfo` forever. HEOS also has multiroom grouping, which DLNA has no
+concept of, and every speaker here is HEOS — so a second generic path would buy
+nothing and cost an inbound HTTP surface.
+
+`pyheos` owns the protocol: the serialized command lock, the heartbeat
+keepalive, reconnect with backoff, and demultiplexing unsolicited events from
+command responses. Same trade as `recurring-ical-events` in Phase 1, and it has
+no transitive dependencies.
+
+**This is the first long-lived outbound connection in the app.** Everything
+else reaches the network on an interval, fetches, and lets go. That is why it
+is an asyncio task started in the lifespan rather than an APScheduler job, and
+why `start_music()` returns the moment the task is created — the speakers are
+usually asleep at boot, and the calendar must not wait on them.
+
+**Nothing is persisted.** The speakers hold their own state and it is read back
+from them, so there is no row to reconcile and no way for a stored volume to
+disagree with the wall. This is the one subsystem with no seeder.
+
+**Progress events are dropped.** HEOS emits one per second for the playing
+speaker. Each is a legitimate update, but forwarding them would put an SSE
+message per second per speaker onto a panel that only needs to know the track
+changed — so the position rides along on the next real update instead, and the
+now-playing bar is deliberately not animated between them.
+
+Three hardware limits shape everything above, none of them guessable:
+
+- **A URL over 255 characters is not played,** and no error is reported. This
+  is what forces HomeDash to be the stream origin rather than handing the
+  speaker a Jellyfin URL, and `homedash-heos-probe` refuses to send one rather
+  than letting it present as silence.
+- **`.m3u` and `.pls` are not played** — direct stream links only. So an album
+  cannot be handed over in one call, and `browse/add_to_queue` only accepts
+  ids from HEOS's own browse tree. HomeDash must own the queue.
+- **SSDP does not cross a Docker bridge network.** The host is configured, not
+  discovered; any one speaker's address will do, since `player/get_players`
+  returns the rest.
+
 ### Astronomy — `astro.py`, `comets.py`
 
 **Computed, not fetched.** Open-Meteo has no moon or meteor data, and every service that
@@ -180,6 +230,7 @@ run_migrations()
   → refresh_weather() in a thread executor     blocking HTTP, kept off the event loop
   → start_scheduler()
   → start_folder_watch(photos_dir, …)         after the scheduler, so the first scan is queued
+  → start_music()                              after bind_loop; returns at once, connects in background
 ```
 
 The frontend is mounted last, at `/`, with `html=True`. Starlette matches in registration
@@ -228,6 +279,9 @@ be mostly in the past — on a Sunday, a snapped three-day view is two days alre
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
 | `GET /api/photos?orientation=landscape\|portrait` | Screensaver playlist: each photo's slot, size, and hashed URL |
 | `GET /api/photos/{id}/image?orientation=&v=` | One pre-rendered JPEG derivative, `immutable` |
+| `GET /api/music/players` | The speakers and what each is playing, plus `connected` |
+| `POST /api/music/players/{id}/transport` | play / pause / stop / next / previous |
+| `POST /api/music/players/{id}/volume` | `{level}`, 0-100 |
 | `GET /api/weather` | The weather cache, plus `astro` — the moon and the next few weeks of sky |
 | `GET /api/events/stream` | SSE (`EventSourceResponse`) |
 
@@ -242,6 +296,15 @@ URL carries the content hash as `v`, which is what makes `immutable` safe: a pho
 in place gets a new URL rather than a cache entry the panel would hold for a year. The `v`
 value is deliberately *not* validated on the way in — it exists to change the URL, and
 rejecting a stale one would only turn a slightly old playlist into visible gaps.
+
+**The music routes are the app's first write path, and there is no auth on
+them.** The panel has none and the household has settled for a LAN-only
+appliance; open decision 3 and the "kid lock" future feature are what would
+change that. Reads and writes degrade differently on purpose: `GET
+/api/music/players` answers 200 with `connected: false` while the speakers are
+still asleep, because that is an ordinary cold start, but a command sent before
+the connection is up is refused rather than reporting a success the speaker
+never heard.
 
 `GET /api/devices/{id}/screen` writes `last_seen` as a side effect: the poll *is* the
 check-in, throttled to at most one write a minute. It is deliberately non-idempotent.
@@ -277,7 +340,9 @@ safe to call from APScheduler threads** (`loop.call_soon_threadsafe`); it silent
 before `bind_loop`. No per-subscriber filtering and no replay — every panel gets every
 event.
 
-Events: `events.updated`, `weather.updated`, `photos.updated`, `heartbeat`.
+Events: `events.updated`, `weather.updated`, `photos.updated`, `music.updated`,
+`heartbeat`. `music.updated` carries no payload — the panel re-reads
+`/api/music/players`, which keeps one source of truth for that wire shape.
 
 It also carries `screen` — whether the schedule says the display should be lit — which the
 panel needs so the screensaver doesn't start at bedtime. It rides the heartbeat rather than
@@ -378,6 +443,7 @@ single-calendar panel, where the legend renders nothing at all.
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
 | `calendarVisibility.ts` | localStorage set of hidden calendar ids |
+| `musicPreference.ts` | localStorage of the controlled speaker, and the fallback when it is gone |
 | `viewPreference.ts` | localStorage of the last-selected view |
 | `weatherCodes.ts` | WMO code → description |
 
@@ -397,6 +463,11 @@ single-calendar panel, where the legend renders nothing at all.
 | `MoonGlyph.svelte` | The lunar disc as inline SVG, drawn from the real illuminated fraction |
 | `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
 | `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
+| `NowPlayingBar.svelte` | The sticky strip under the calendar, while there is a track to act on |
+| `MusicOverlay.svelte` | Full-screen music, over the calendar and under the screensaver |
+| `NowPlaying.svelte` | Art, title, artist, album, progress |
+| `TransportControls.svelte` | Play/pause/skip/stop, inline SVG, compact and full |
+| `PlayerPicker.svelte` | Which speaker; renders nothing for a one-speaker household |
 
 ### Idioms
 
@@ -500,6 +571,23 @@ kitchen goes dark. It is deliberately not tap-to-dismiss — the screen is meant
 
 `screenOn` starts `true`, so a panel that has not had its first heartbeat shows the calendar
 rather than flashing black on every reload.
+
+**Music does not add a fourth state.** `NowPlayingBar` renders *inside* the calendar state,
+and `MusicOverlay` sits above the calendar at `z-index: 40` but below the screensaver at
+`100` and `PanelBlank` at `200` — so the order above is unchanged and bedtime still wins over
+anything playing.
+
+On idle the photos still take over, because that is what the screensaver is for; the track
+rides on top as a caption instead. The panel therefore answers "what is this song" without
+giving up the family photos exactly when people are in the kitchen. `idle.ts` listens on
+`window` with `capture`, so taps inside the music overlay already count as activity and it
+is never yanked away mid-browse — no extra wiring, unlike the screensaver, which swallows
+its own dismissing tap.
+
+The bar shows while a track is **playing or paused**, not only while playing. Keying it on
+`play` alone made the bar vanish the instant you paused from it, taking the resume button
+with it; only a stopped speaker has nothing to offer. The screensaver caption is stricter
+and keys on `play`, since a paused track is not what the room is listening to.
 
 ### The watchdog
 

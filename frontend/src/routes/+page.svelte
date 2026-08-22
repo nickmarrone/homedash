@@ -4,15 +4,20 @@
 		fetchAgenda,
 		fetchCalendarView,
 		fetchCalendars,
+		fetchMusicPlayers,
 		fetchPhotos,
 		fetchWeather,
+		sendTransport,
+		setPlayerVolume,
 		subscribeToUpdates,
 		type AgendaCalendar,
 		type AgendaItem,
 		type CalendarView,
 		type CalendarViewName,
 		type Heartbeat,
+		type MusicPlayer,
 		type PhotoPlaylist,
+		type TransportAction,
 		type Weather
 	} from '$lib/api';
 	import { createOrientation } from '$lib/orientation.svelte';
@@ -20,11 +25,14 @@
 	import { startWatchdog } from '$lib/watchdog';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
+	import { loadPlayerId, pickPlayer, savePlayerId } from '$lib/musicPreference';
 	import AgendaList from '$lib/components/AgendaList.svelte';
 	import CalendarLegend from '$lib/components/CalendarLegend.svelte';
 	import DayWeekView from '$lib/components/DayWeekView.svelte';
 	import HourlyForecast from '$lib/components/HourlyForecast.svelte';
 	import MonthGrid from '$lib/components/MonthGrid.svelte';
+	import MusicOverlay from '$lib/components/MusicOverlay.svelte';
+	import NowPlayingBar from '$lib/components/NowPlayingBar.svelte';
 	import SkyEvents from '$lib/components/SkyEvents.svelte';
 	import PeriodNav from '$lib/components/PeriodNav.svelte';
 	import PanelBlank from '$lib/components/PanelBlank.svelte';
@@ -50,6 +58,13 @@
 	let serverToday = $state<string | null>(null);
 	let serverNow = $state<string | null>(null);
 
+	// Null means this panel has no music configured at all, which is different
+	// from having music whose speakers are asleep - the first hides the UI
+	// permanently, the second shows it with nothing playing.
+	let musicPlayers = $state<MusicPlayer[] | null>(null);
+	let selectedPlayerId = $state<number | null>(null);
+	let musicOpen = $state(false);
+
 	let playlist = $state<PhotoPlaylist | null>(null);
 	let idle = $state(false);
 	// Starts lit so a panel that has not had its first heartbeat yet shows the
@@ -71,6 +86,22 @@
 	// that should be showing photographs.
 	let screensaverOn = $derived(
 		idle && screenOn && (playlist?.photos.length ?? 0) > 0
+	);
+
+	// Falls back rather than showing nothing when the remembered speaker is
+	// gone: an unplugged or renamed player would otherwise leave the panel with
+	// music controls wired to an id the backend no longer knows.
+	let activePlayer = $derived(pickPlayer(musicPlayers ?? [], selectedPlayerId));
+
+	// The bar shows while there is a track to act on - playing *or* paused. A
+	// household that never uses this never sees it, and the calendar keeps its
+	// full height on every other day.
+	//
+	// Paused counts, and that is not a detail: keying this on 'play' alone made
+	// the bar disappear the instant you paused from it, taking the resume
+	// button with it. Only a stopped speaker has nothing to offer.
+	let musicBarOn = $derived(
+		activePlayer !== null && (activePlayer.state === 'play' || activePlayer.state === 'pause')
 	);
 
 	let visibleItems = $derived(items.filter((item) => isVisible(item, hiddenCalendars)));
@@ -137,6 +168,41 @@
 		weather = await fetchWeather();
 	}
 
+	async function loadMusic() {
+		const next = await fetchMusicPlayers();
+		musicPlayers = next === null ? null : next.players;
+	}
+
+	function selectPlayer(id: number) {
+		selectedPlayerId = id;
+		savePlayerId(id);
+	}
+
+	async function runMusicCommand(command: Promise<void>) {
+		try {
+			await command;
+		} catch {
+			// A speaker that has just dropped off wifi must not take the
+			// calendar down with it. The next pushed event or reload corrects
+			// whatever the panel is showing.
+			return;
+		}
+		// HEOS pushes a change event for anything that actually happened, but
+		// refetching immediately closes the window where a tapped button still
+		// renders its old state.
+		loadMusic();
+	}
+
+	function doTransport(action: TransportAction) {
+		if (!activePlayer) return;
+		runMusicCommand(sendTransport(activePlayer.id, action));
+	}
+
+	function doVolume(level: number) {
+		if (!activePlayer) return;
+		runMusicCommand(setPlayerVolume(activePlayer.id, level));
+	}
+
 	async function loadPhotos() {
 		const next = await fetchPhotos(orientation.isPortrait ? 'portrait' : 'landscape');
 		playlist = next;
@@ -177,6 +243,7 @@
 		loadCalendars();
 		loadWeather();
 		loadPhotos();
+		loadMusic();
 	}
 
 	function onHeartbeat(heartbeat: Heartbeat) {
@@ -209,10 +276,12 @@
 	onMount(() => {
 		hiddenCalendars = loadHidden();
 		view = loadView();
+		selectedPlayerId = loadPlayerId();
 		loadEvents();
 		loadCalendars();
 		loadWeather();
 		loadPhotos();
+		loadMusic();
 
 		const watchdog = startWatchdog();
 
@@ -231,6 +300,7 @@
 				}
 					if (eventType === 'weather.updated') loadWeather();
 					if (eventType === 'photos.updated') loadPhotos();
+					if (eventType === 'music.updated') loadMusic();
 			}
 		});
 
@@ -288,10 +358,38 @@
 			</section>
 		{/if}
 	{/if}
+
+	{#if musicBarOn && activePlayer}
+		<div class="music-slot">
+			<NowPlayingBar
+				player={activePlayer}
+				onAction={doTransport}
+				onOpen={() => (musicOpen = true)}
+			/>
+		</div>
+	{/if}
 </main>
 
+{#if musicOpen && activePlayer}
+	<MusicOverlay
+		players={musicPlayers ?? []}
+		player={activePlayer}
+		onSelectPlayer={selectPlayer}
+		onAction={doTransport}
+		onVolume={doVolume}
+		onClose={() => (musicOpen = false)}
+	/>
+{/if}
+
 {#if screensaverOn && playlist}
-	<Screensaver {playlist} onDismiss={dismissScreensaver} />
+	<!-- Photos still win on idle - that is what the screensaver is for - and
+	     the track rides along on top, so the panel can still answer "what is
+	     this song" without giving up the family photos. -->
+	<Screensaver
+		{playlist}
+		nowPlaying={activePlayer?.state === 'play' ? (activePlayer.now_playing ?? null) : null}
+		onDismiss={dismissScreensaver}
+	/>
 {/if}
 
 {#if !screenOn}
@@ -341,6 +439,18 @@
 
 	.switcher-slot {
 		margin-left: auto;
+	}
+
+	/* Sticky rather than in flow at the end: month view fills a 1080-tall
+	   panel, so a bar that simply followed the grid would sit below the fold
+	   exactly when there is most to look at. */
+	.music-slot {
+		position: sticky;
+		bottom: 0;
+		z-index: 20;
+		padding-top: 0.75rem;
+		margin-top: 1rem;
+		background: Canvas;
 	}
 
 	.upcoming {

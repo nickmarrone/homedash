@@ -192,6 +192,71 @@ export async function fetchPhotos(orientation: PanelOrientation): Promise<PhotoP
 	return response.json();
 }
 
+/** One HEOS speaker, as the panel renders it. */
+export interface MusicPlayer {
+	id: number;
+	name: string;
+	model: string;
+	version: string;
+	available: boolean;
+	state: 'play' | 'pause' | 'stop' | 'unknown';
+	volume: number;
+	muted: boolean;
+	group_id: number | null;
+	now_playing: NowPlaying | null;
+}
+
+export interface NowPlaying {
+	title: string | null;
+	artist: string | null;
+	album: string | null;
+	image_url: string | null;
+	duration_ms: number | null;
+	position_ms: number | null;
+}
+
+export interface MusicPlayers {
+	/** False while the backend is still reaching the speakers, which is the
+	 * normal state at boot - they are usually asleep. The music UI stays
+	 * visible and simply shows nothing playing. */
+	connected: boolean;
+	players: MusicPlayer[];
+}
+
+export type TransportAction = 'play' | 'pause' | 'stop' | 'next' | 'previous';
+
+/** The speakers, or null if this panel has no music configured at all.
+ *
+ * The two cases are deliberately different: a 503 means there is nothing to
+ * show ever, and the caller hides the music UI outright, while a body with
+ * `connected: false` means the speakers are merely asleep. Throwing for the
+ * first would put a permanent error on a panel that is working exactly as
+ * configured. */
+export async function fetchMusicPlayers(): Promise<MusicPlayers | null> {
+	const response = await fetch('/api/music/players');
+	if (response.status === 503) return null;
+	if (!response.ok) throw new Error(`music fetch failed: ${response.status}`);
+	return response.json();
+}
+
+export async function sendTransport(playerId: number, action: TransportAction): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/transport`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action })
+	});
+	if (!response.ok) throw new Error(`transport failed: ${response.status}`);
+}
+
+export async function setPlayerVolume(playerId: number, level: number): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/volume`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ level })
+	});
+	if (!response.ok) throw new Error(`volume failed: ${response.status}`);
+}
+
 export interface Heartbeat {
 	/** The server's current date in the home timezone. The panel must not read
 	 * its own clock to decide the day has rolled over - see format.ts. */
@@ -204,7 +269,8 @@ export interface Heartbeat {
 }
 
 export interface UpdateStreamHandlers {
-	/** An "events.updated", "weather.updated" or "photos.updated" name. */
+	/** An "events.updated", "weather.updated", "photos.updated" or
+	 * "music.updated" name. */
 	onEvent: (eventType: string) => void;
 	onHeartbeat?: (heartbeat: Heartbeat) => void;
 	/** Fired when the stream reopens after dropping. EventSource retries on its
@@ -229,6 +295,7 @@ export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 	source.addEventListener('events.updated', forward);
 	source.addEventListener('weather.updated', forward);
 	source.addEventListener('photos.updated', forward);
+	source.addEventListener('music.updated', forward);
 
 	source.addEventListener('heartbeat', (event: MessageEvent) => {
 		handlers.onMessage?.();
