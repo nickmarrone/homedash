@@ -7,6 +7,8 @@
 		fetchMusicPlayers,
 		fetchPhotos,
 		fetchWeather,
+		playAlbum,
+		playTracks,
 		sendTransport,
 		setPlayerVolume,
 		subscribeToUpdates,
@@ -62,6 +64,7 @@
 	// from having music whose speakers are asleep - the first hides the UI
 	// permanently, the second shows it with nothing playing.
 	let musicPlayers = $state<MusicPlayer[] | null>(null);
+	let hasLibrary = $state(false);
 	let selectedPlayerId = $state<number | null>(null);
 	let musicOpen = $state(false);
 
@@ -171,6 +174,7 @@
 	async function loadMusic() {
 		const next = await fetchMusicPlayers();
 		musicPlayers = next === null ? null : next.players;
+		hasLibrary = next?.library ?? false;
 	}
 
 	function selectPlayer(id: number) {
@@ -201,6 +205,16 @@
 	function doVolume(level: number) {
 		if (!activePlayer) return;
 		runMusicCommand(setPlayerVolume(activePlayer.id, level));
+	}
+
+	function doPlayAlbum(albumId: string) {
+		if (!activePlayer) return;
+		runMusicCommand(playAlbum(activePlayer.id, albumId));
+	}
+
+	function doPlayTracks(trackIds: string[], albumId: string) {
+		if (!activePlayer) return;
+		runMusicCommand(playTracks(activePlayer.id, trackIds, albumId));
 	}
 
 	async function loadPhotos() {
@@ -367,6 +381,28 @@
 				onOpen={() => (musicOpen = true)}
 			/>
 		</div>
+	{:else if hasLibrary && activePlayer}
+		<!-- With nothing playing there is no bar, so there has to be some other
+		     way in. A single button rather than a permanent strip: the calendar
+		     is what the panel is for, and this is the smallest thing that keeps
+		     the library reachable. -->
+		<div class="music-slot quiet">
+			<button class="open-music" type="button" onclick={() => (musicOpen = true)}>
+				<svg viewBox="0 0 24 24" aria-hidden="true">
+					<path
+						d="M9 18V6l10-2v12"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+					<circle cx="6.5" cy="18" r="2.5" fill="currentColor" />
+					<circle cx="16.5" cy="16" r="2.5" fill="currentColor" />
+				</svg>
+				Music
+			</button>
+		</div>
 	{/if}
 </main>
 
@@ -374,9 +410,12 @@
 	<MusicOverlay
 		players={musicPlayers ?? []}
 		player={activePlayer}
+		{hasLibrary}
 		onSelectPlayer={selectPlayer}
 		onAction={doTransport}
 		onVolume={doVolume}
+		onPlayAlbum={doPlayAlbum}
+		onPlayTracks={doPlayTracks}
 		onClose={() => (musicOpen = false)}
 	/>
 {/if}
@@ -451,6 +490,38 @@
 		padding-top: 0.75rem;
 		margin-top: 1rem;
 		background: Canvas;
+	}
+
+	/* Nothing playing: a button, not a bar, so an idle panel gives the
+	   calendar back the space. */
+	.music-slot.quiet {
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.open-music {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-height: 48px;
+		padding: 0 1.1rem;
+		border: none;
+		border-radius: 999px;
+		background: rgba(128, 128, 128, 0.14);
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
+		touch-action: manipulation;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.open-music svg {
+		width: 22px;
+		height: 22px;
+	}
+
+	.open-music:active {
+		transform: scale(0.97);
 	}
 
 	.upcoming {

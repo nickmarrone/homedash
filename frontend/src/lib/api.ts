@@ -204,6 +204,7 @@ export interface MusicPlayer {
 	muted: boolean;
 	group_id: number | null;
 	now_playing: NowPlaying | null;
+	queue: MusicQueue | null;
 }
 
 export interface NowPlaying {
@@ -215,12 +216,86 @@ export interface NowPlaying {
 	position_ms: number | null;
 }
 
+/** What HomeDash is holding for a speaker, which the speaker cannot report -
+ * as far as it knows it was handed a single stream. */
+export interface MusicQueue {
+	position: number;
+	length: number;
+	remaining: number;
+	track: { id: string; title: string } | null;
+}
+
 export interface MusicPlayers {
 	/** False while the backend is still reaching the speakers, which is the
 	 * normal state at boot - they are usually asleep. The music UI stays
 	 * visible and simply shows nothing playing. */
 	connected: boolean;
+	/** Whether a Jellyfin library is configured. Speakers without one is a
+	 * coherent setup - the panel still controls what is already playing - so
+	 * the browse button is hidden rather than the whole music UI. */
+	library: boolean;
 	players: MusicPlayer[];
+}
+
+export interface LibraryArtist {
+	id: string;
+	name: string;
+}
+
+export interface LibraryAlbum {
+	id: string;
+	name: string;
+	artist: string | null;
+	year: number | null;
+}
+
+export interface LibraryTrack {
+	id: string;
+	title: string;
+	artist: string | null;
+	album: string | null;
+	duration_ms: number | null;
+	track_number: number | null;
+}
+
+export type LibraryLevel = 'artists' | 'albums' | 'tracks';
+
+export async function fetchLibrary(
+	kind: LibraryLevel,
+	parent?: string
+): Promise<(LibraryArtist | LibraryAlbum | LibraryTrack)[]> {
+	const query = new URLSearchParams({ kind });
+	if (parent) query.set('parent', parent);
+	const response = await fetch(`/api/music/library?${query}`);
+	if (!response.ok) throw new Error(`library fetch failed: ${response.status}`);
+	return (await response.json()).items;
+}
+
+/** Cover art, proxied so the Jellyfin key never reaches the browser. */
+export function artUrl(itemId: string, size = 480): string {
+	return `/api/music/art/${itemId}?size=${size}`;
+}
+
+export async function playAlbum(playerId: number, albumId: string): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/play`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ album_id: albumId })
+	});
+	if (!response.ok) throw new Error(`play failed: ${response.status}`);
+}
+
+export async function playTracks(
+	playerId: number,
+	trackIds: string[],
+	parentAlbumId: string
+): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/play`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ track_ids: trackIds, parent_album_id: parentAlbumId })
+	});
+	if (!response.ok) throw new Error(`play failed: ${response.status}`);
 }
 
 export type TransportAction = 'play' | 'pause' | 'stop' | 'next' | 'previous';
