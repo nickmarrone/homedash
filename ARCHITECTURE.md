@@ -139,8 +139,16 @@ files, so per-row unlinking would blank the surviving copy.
 
 | Module | Responsibility |
 |---|---|
+| `base.py` | `MusicLibrary` protocol and the `Artist`/`Album`/`Track` shapes |
 | `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
-| `service.py` | The process-wide singleton, and the switch that decides it exists |
+| `jellyfin.py` | `JellyfinLibrary`: browse three levels, and where the audio lives |
+| `tokens.py` | Short opaque stream tokens, and the 255-character check |
+| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold |
+| `service.py` | The process-wide singletons, and the switches that decide they exist |
+
+`queue.py` is the only module that knows about both halves — `heos.py` and
+`jellyfin.py` never import each other. The same one-way discipline
+`comets.py`/`astro.py` follow.
 
 **HEOS's own CLI protocol, not DLNA.** HEOS pushes change events down the same
 socket the commands go up, so a speaker's state arrives unprompted and turns
@@ -183,6 +191,35 @@ Three hardware limits shape everything above, none of them guessable:
 - **SSDP does not cross a Docker bridge network.** The host is configured, not
   discovered; any one speaker's address will do, since `player/get_players`
   returns the rest.
+
+**HomeDash is the stream origin, and all three limits force it.** The speaker
+fetches `/api/music/s/{token}` from HomeDash, which proxies the bytes from
+Jellyfin with a header-authenticated request: the URL stays short, no credential
+travels in it, and nothing depends on Jellyfin's query-parameter auth — which is
+deprecated in 10.11 and **removed in 10.13**.
+
+**The queue is HomeDash's, and it is not gapless.** One track is sent, and the
+next goes out when the speaker reports the first finished. There is roughly a
+second of silence between tracks; that is inherent to driving it this way. The
+escape hatch, if it ever matters, is routing playback through a DLNA server HEOS
+browses natively — a real queue, at the cost of mapping two id spaces.
+
+**Telling three identical `stop` events apart** is where the queue's actual
+logic lives. A speaker reports `stop` between two tracks, at the end of one, and
+when somebody presses stop. `awaiting_start` distinguishes the first (set when a
+track is sent, cleared on the first non-stop state), and `clear()` on an explicit
+stop distinguishes the third. Getting the first wrong consumes an entire album in
+a fraction of a second with only the last track audible; getting the third wrong
+restarts music on somebody who just asked for silence.
+
+**Skips go through the queue, not through HEOS.** Content sent as a URL never
+enters the speaker's own queue, so `play_next` has nothing to move to and does
+nothing at all. The route asks `QueueManager` first and falls through to the
+speaker only when there is no HomeDash queue — which is right for a speaker
+playing from one of its own sources.
+
+The queue and the token store are in-process, like the weather cache. **A restart
+therefore stops the music after the current track.**
 
 ### Astronomy — `astro.py`, `comets.py`
 
@@ -279,9 +316,13 @@ be mostly in the past — on a Sunday, a snapped three-day view is two days alre
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
 | `GET /api/photos?orientation=landscape\|portrait` | Screensaver playlist: each photo's slot, size, and hashed URL |
 | `GET /api/photos/{id}/image?orientation=&v=` | One pre-rendered JPEG derivative, `immutable` |
-| `GET /api/music/players` | The speakers and what each is playing, plus `connected` |
+| `GET /api/music/players` | The speakers, what each is playing, and its queue |
+| `GET /api/music/library?kind=artists\|albums\|tracks&parent=` | One level of the library |
+| `GET /api/music/art/{item_id}` | Proxied cover art, `max-age=3600` |
+| `POST /api/music/players/{id}/play` | `{album_id}` or `{track_ids, parent_album_id}` |
 | `POST /api/music/players/{id}/transport` | play / pause / stop / next / previous |
 | `POST /api/music/players/{id}/volume` | `{level}`, 0-100 |
+| `GET /api/music/s/{token}` | **Fetched by the speaker, not the panel.** Streaming audio proxy |
 | `GET /api/weather` | The weather cache, plus `astro` — the moon and the next few weeks of sky |
 | `GET /api/events/stream` | SSE (`EventSourceResponse`) |
 
@@ -290,7 +331,16 @@ build plain dicts; `serializers.py` exists only where two endpoints must emit an
 shape. Request params use `Query(...)` with manual validation raising `HTTPException(400)`.
 Routes stay thin — date arithmetic lives in `grid.py` and `devices.py`, not in handlers.
 
-The image endpoint is the only non-JSON response in the app. It is a pure file read — the
+`GET /api/music/s/{token}` is the app's only streaming response, and the only
+endpoint whose client is not a browser. It forwards the caller's `Range` header
+and passes `Content-Range`/`Accept-Ranges` back, because HEOS asks for ranges and
+Jellyfin already implements them correctly. The `httpx.AsyncClient` deliberately
+outlives the handler — the body is pulled long after it returns — so it is closed
+in the generator's `finally`, not a context manager. Browsing failures answer
+**502, not 500**: the fault is upstream, and the status is the difference between
+"check Jellyfin" and "check HomeDash" for whoever reads the log.
+
+The image endpoint is the only other non-JSON response in the app. It is a pure file read — the
 resize happened at index time, the same discipline the weather cache states for itself. Its
 URL carries the content hash as `v`, which is what makes `immutable` safe: a photo replaced
 in place gets a new URL rather than a cache entry the panel would hold for a year. The `v`

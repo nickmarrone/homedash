@@ -38,6 +38,10 @@ TRANSPORT_ACTIONS = ("play", "pause", "stop", "next", "previous")
 # speaker, so it updates the snapshot and is not itself a reason to notify.
 _PROGRESS_EVENT = "event/player_now_playing_progress"
 
+# The one event the queue turns on: a track finishing is reported as the
+# speaker going to `stop`, and there is no more specific signal for it.
+_STATE_EVENT = "event/player_state_changed"
+
 # How long to wait before retrying the first connection. pyheos handles
 # reconnection once it has connected at least once; this covers the case where
 # the speaker is off at boot, which it usually is.
@@ -61,9 +65,13 @@ class HeosController:
         host: str,
         on_change: Callable[[], None] | None = None,
         connect: Callable[[str], Any] | None = None,
+        on_state: Callable[[int, str], Any] | None = None,
     ) -> None:
         self._host = host
         self._on_change = on_change
+        # Awaited on every state change. This is what advances an album: the
+        # only signal that a track has finished is the speaker going to `stop`.
+        self._on_state = on_state
         # Injected in tests. The real one is pyheos' own connect-and-retry
         # constructor; a fake needs only `players` and `disconnect`.
         self._connect = connect or _connect_to_heos
@@ -132,6 +140,22 @@ class HeosController:
         """
         if event == _PROGRESS_EVENT:
             return
+
+        # The queue runs first and the panel is told afterwards, so a track
+        # that ends is already replaced by the time the panel refetches. The
+        # other order shows a visible flash of "nothing playing" between every
+        # two tracks of an album.
+        if event == _STATE_EVENT and self._on_state is not None:
+            player = self._heos.players.get(player_id) if self._heos else None
+            if player is not None:
+                try:
+                    await self._on_state(player_id, _state_of(player))
+                except Exception:
+                    # A queue that fails must not take down the event handler,
+                    # or every later state change is lost too and the panel
+                    # silently stops tracking the speakers.
+                    logger.exception("Queue failed handling a state change")
+
         if self._on_change is not None:
             self._on_change()
 
@@ -182,6 +206,16 @@ class HeosController:
         await self._player(player_id).play_url(url)
 
 
+def _state_of(player: HeosPlayer) -> str:
+    """The speaker's play state as a plain string.
+
+    Shared by the serializer and the queue on purpose: the queue decides an
+    album has moved on by comparing against "stop", so the two must not be able
+    to disagree about how an enum spells itself.
+    """
+    return player.state.value if isinstance(player.state, PlayState) else str(player.state)
+
+
 async def _connect_to_heos(host: str) -> Heos:
     """Connect, with pyheos owning reconnection from here on.
 
@@ -205,14 +239,13 @@ def _serialize_player(player: HeosPlayer) -> dict:
     no now_playing_media fields worth sending.
     """
     media = player.now_playing_media
-    state = player.state.value if isinstance(player.state, PlayState) else str(player.state)
     return {
         "id": player.player_id,
         "name": player.name,
         "model": player.model,
         "version": player.version,
         "available": player.available,
-        "state": state,
+        "state": _state_of(player),
         "volume": player.volume,
         "muted": player.is_muted,
         "group_id": player.group_id,

@@ -3,7 +3,7 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
@@ -26,7 +26,16 @@ from app.db import get_session
 from app.devices import screen_state, touch_last_seen
 from app.models import CalendarSource, Device, Event, EventInstance, Photo
 from app.music.heos import TRANSPORT_ACTIONS, HeosController
-from app.music.service import get_controller, music_configured
+from app.music.jellyfin import JellyfinError, JellyfinLibrary
+from app.music.service import (
+    get_controller,
+    get_library,
+    get_queues,
+    get_tokens,
+    library_configured,
+    music_configured,
+)
+from app.music.tokens import UrlTooLong
 from app.photos.derivatives import (
     PANEL_ORIENTATIONS,
     derivative_path,
@@ -412,9 +421,16 @@ def get_music_players() -> dict:
         )
     controller = get_controller()
     connected = controller is not None and controller.connected
+    queues = get_queues()
+    players = controller.players() if controller is not None else []
+    for player in players:
+        # What HomeDash is holding for this speaker, which the speaker itself
+        # cannot report: as far as it knows it was handed one stream.
+        player["queue"] = queues.snapshot(player["id"]) if queues is not None else None
     return {
         "connected": connected,
-        "players": controller.players() if controller is not None else [],
+        "library": library_configured(),
+        "players": players,
     }
 
 
@@ -425,6 +441,12 @@ async def post_music_transport(player_id: int, body: dict = Body(default={})) ->
     The first write path in this app. There is no auth on it: the panel has
     none, and the household has settled for a LAN-only appliance. Worth knowing
     rather than discovering - see the "kid lock" note in CLAUDE.md.
+
+    Skips are handled by HomeDash's own queue when there is one. Content sent
+    to a speaker as a URL never enters the speaker's queue, so HEOS's
+    `play_next` has nothing to move to and does nothing at all - a skip button
+    that silently did nothing is exactly the kind of fault a wall panel hides
+    well. A speaker playing from its own sources still falls through to it.
     """
     action = body.get("action")
     if action not in TRANSPORT_ACTIONS:
@@ -433,7 +455,21 @@ async def post_music_transport(player_id: int, body: dict = Body(default={})) ->
             detail=f"action must be one of {', '.join(TRANSPORT_ACTIONS)}",
         )
     controller = _controller_or_503()
+    queues = get_queues()
+
     try:
+        if queues is not None and action in ("next", "previous"):
+            handled = await (
+                queues.next(player_id) if action == "next" else queues.previous(player_id)
+            )
+            if handled:
+                return {"ok": True}
+        if queues is not None and action == "stop":
+            # Before the command, not after: the speaker reports a finished
+            # track and a deliberate stop identically, so the queue has to be
+            # gone before the resulting `stop` event arrives or it would
+            # helpfully start the next track on somebody who asked for silence.
+            queues.clear(player_id)
         await controller.transport(player_id, action)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
@@ -457,3 +493,219 @@ async def post_music_volume(player_id: int, body: dict = Body(default={})) -> di
     except KeyError:
         raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
     return {"ok": True}
+
+
+def _library_or_503() -> JellyfinLibrary:
+    if not library_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="no music library; set HOMEDASH_JELLYFIN_URL and HOMEDASH_JELLYFIN_API_KEY",
+        )
+    library = get_library()
+    if library is None:
+        raise HTTPException(status_code=503, detail="music library not started")
+    return library
+
+
+@router.get("/api/music/library")
+def get_music_library(
+    kind: str = Query("artists"),
+    parent: str | None = Query(None),
+) -> dict:
+    """One level of the library: artists, then albums, then tracks.
+
+    A level at a time rather than a tree. The panel shows one screen at a time
+    and a whole music library is far too much to hand it in one response, so
+    each call answers exactly what the screen in front of somebody needs.
+    """
+    if kind not in ("artists", "albums", "tracks"):
+        raise HTTPException(status_code=400, detail="kind must be artists, albums or tracks")
+    if kind == "tracks" and not parent:
+        raise HTTPException(status_code=400, detail="tracks requires a parent album id")
+
+    library = _library_or_503()
+    try:
+        if kind == "artists":
+            items = [{"id": a.id, "name": a.name} for a in library.artists()]
+        elif kind == "albums":
+            items = [
+                {"id": a.id, "name": a.name, "artist": a.artist, "year": a.year}
+                for a in library.albums(parent)
+            ]
+        else:
+            items = [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "artist": t.artist,
+                    "album": t.album,
+                    "duration_ms": t.duration_ms,
+                    "track_number": t.track_number,
+                }
+                for t in library.tracks(parent or "")
+            ]
+    except JellyfinError as exc:
+        # 502, not 500: the failure is upstream, and saying so is the
+        # difference between "check Jellyfin" and "check HomeDash" for whoever
+        # is reading the log.
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+
+    return {"kind": kind, "parent": parent, "items": items}
+
+
+@router.get("/api/music/art/{item_id}")
+async def get_music_art(item_id: str, size: int = Query(480)) -> Response:
+    """One cover image, proxied.
+
+    Proxied rather than linked for the same reason the audio is: the Jellyfin
+    API key must never reach the browser. Jellyfin already generated these at
+    import time, so `size` bounds what crosses the LAN rather than asking it to
+    resize anything.
+    """
+    if not 32 <= size <= 1920:
+        raise HTTPException(status_code=400, detail="size must be between 32 and 1920")
+    library = _library_or_503()
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            upstream = await client.get(library.art_url(item_id, size), headers=library.headers)
+    except Exception:
+        raise HTTPException(status_code=502, detail="could not reach Jellyfin") from None
+    if upstream.status_code != 200:
+        # 404 rather than passing the upstream status through: a missing cover
+        # is an ordinary thing for the panel to handle, and it already falls
+        # back to a placeholder.
+        raise HTTPException(status_code=404, detail="no cover art")
+
+    return Response(
+        content=upstream.content,
+        media_type=upstream.headers.get("Content-Type", "image/jpeg"),
+        # Not immutable: unlike the photo derivatives, this URL carries no
+        # content hash, so replacing a cover in Jellyfin has to be able to win
+        # eventually. An hour is long enough that scrolling a library does not
+        # refetch, and short enough that a fix shows up the same afternoon.
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post("/api/music/players/{player_id}/play")
+async def post_music_play(player_id: int, body: dict = Body(default={})) -> dict:
+    """Start an album, or an explicit list of tracks, on one speaker.
+
+    HomeDash holds the resulting queue and feeds the speaker one track at a
+    time - see app/music/queue.py for why there is no way to hand over the
+    whole album at once.
+    """
+    album_id = body.get("album_id")
+    track_ids = body.get("track_ids")
+    if not isinstance(album_id, str) and not isinstance(track_ids, list):
+        raise HTTPException(status_code=400, detail="pass either album_id or track_ids")
+
+    controller = _controller_or_503()
+    library = _library_or_503()
+    queues = get_queues()
+    if queues is None:
+        raise HTTPException(status_code=503, detail="music library not started")
+    if player_id not in {p["id"] for p in controller.players()}:
+        raise HTTPException(status_code=404, detail=f"no player with id {player_id}")
+
+    try:
+        if isinstance(album_id, str):
+            tracks = library.tracks(album_id)
+        else:
+            wanted = [t for t in track_ids if isinstance(t, str)]
+            # One album fetch and a filter, rather than a request per track:
+            # the panel only ever sends a subset of an album it is already
+            # looking at, and it sends that album's id alongside.
+            parent = body.get("parent_album_id")
+            if not isinstance(parent, str):
+                raise HTTPException(
+                    status_code=400, detail="track_ids requires parent_album_id"
+                )
+            by_id = {t.id: t for t in library.tracks(parent)}
+            tracks = [by_id[t] for t in wanted if t in by_id]
+    except JellyfinError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+
+    if not tracks:
+        raise HTTPException(status_code=404, detail="nothing to play")
+
+    try:
+        await queues.start(player_id, tracks)
+    except UrlTooLong as exc:
+        # 500, and loudly: this is configuration, not a bad request, and it is
+        # the failure that otherwise presents as a speaker playing silence.
+        raise HTTPException(status_code=500, detail=str(exc)) from None
+
+    return {"ok": True, "queued": len(tracks)}
+
+
+@router.get("/api/music/s/{token}")
+async def get_music_stream(token: str, request: Request) -> StreamingResponse:
+    """The audio itself. **This endpoint is fetched by the speaker, not the panel.**
+
+    It exists so that no Jellyfin credential ever has to travel in a URL, and
+    so that the URL stays under the 255 characters HEOS will fetch. Everything
+    about its shape follows from that.
+
+    Range requests are forwarded rather than answered here: HEOS asks for them,
+    and Jellyfin already implements them properly for the underlying file.
+    """
+    tokens = get_tokens()
+    library = get_library()
+    if tokens is None or library is None:
+        raise HTTPException(status_code=503, detail="music library not started")
+
+    track_id = tokens.resolve(token)
+    if track_id is None:
+        raise HTTPException(status_code=404, detail="unknown or expired stream token")
+
+    import httpx
+
+    headers = dict(library.headers)
+    # Only Range is forwarded. Passing the speaker's whole header set through
+    # would hand Jellyfin an Accept-Encoding it might honour, and a
+    # transparently compressed audio stream is not what was asked for.
+    if "range" in request.headers:
+        headers["Range"] = request.headers["range"]
+
+    client = httpx.AsyncClient(timeout=None, follow_redirects=True)
+    try:
+        upstream_request = client.build_request(
+            "GET", library.stream_url(track_id), headers=headers
+        )
+        upstream = await client.send(upstream_request, stream=True)
+    except Exception:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="could not reach Jellyfin") from None
+
+    if upstream.status_code >= 400:
+        status = upstream.status_code
+        await upstream.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"Jellyfin returned {status}")
+
+    async def body():
+        # The client outlives this function, so it is closed here rather than
+        # in a context manager: returning a StreamingResponse means the bytes
+        # are pulled long after the handler has returned.
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    passthrough = {
+        name: upstream.headers[name]
+        for name in ("content-length", "content-range", "accept-ranges")
+        if name in upstream.headers
+    }
+    return StreamingResponse(
+        body(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("Content-Type", "audio/mpeg"),
+        headers=passthrough,
+    )
