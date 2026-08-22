@@ -173,6 +173,14 @@ usually asleep at boot, and the calendar must not wait on them.
 from them, so there is no row to reconcile and no way for a stored volume to
 disagree with the wall. This is the one subsystem with no seeder.
 
+**Connecting is not enough to have players.** `pyheos.Heos.players` stays an
+empty dict until `get_players()` is called, so `_run()` calls it once after
+connecting. Skipping it is not a partial failure — it presents as a healthy
+connection with no speakers, which the panel renders identically to a
+deployment that has no music configured. One call is also all that is needed
+for the lifetime of the process: pyheos re-loads players on reconnect only if
+they were ever loaded, so this is what arms that too.
+
 **Progress events are dropped.** HEOS emits one per second for the playing
 speaker. Each is a legitimate update, but forwarding them would put an SSE
 message per second per speaker onto a panel that only needs to know the track

@@ -95,7 +95,19 @@ class HeosController:
             try:
                 self._heos = await self._connect(self._host)
                 self._subscribe()
-                logger.info("Connected to HEOS at %s", self._host)
+                # Connecting does NOT populate `heos.players` - pyheos loads
+                # them lazily, and `players` stays an empty dict until asked.
+                # Without this the panel connects successfully and then shows
+                # no speakers at all, which looks exactly like a deployment
+                # with no music configured.
+                #
+                # Once here, reconnects take care of themselves: pyheos
+                # re-loads players on reconnect only if they were ever loaded,
+                # so this one call is what arms that too.
+                players = await self._heos.get_players()
+                logger.info(
+                    "Connected to HEOS at %s; %d player(s)", self._host, len(players)
+                )
                 return
             except asyncio.CancelledError:
                 raise

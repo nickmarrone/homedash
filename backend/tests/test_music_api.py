@@ -39,14 +39,19 @@ def make_client(controller=None, configured=True, library=None, queues=None):
 
 
 def connected_controller(players=None):
+    """A controller that has been through the real connect path.
+
+    Deliberately `_run()` rather than assigning `_heos` and subscribing by
+    hand: loading the player list is part of connecting, and a helper that
+    skipped it was what let the controller ship reading an empty dict.
+    """
     heos = FakeHeos(players)
 
     async def connect(host):
         return heos
 
     controller = HeosController("10.0.0.5", connect=connect)
-    controller._heos = heos
-    controller._subscribe()
+    run_(controller._run())
     return controller, heos
 
 

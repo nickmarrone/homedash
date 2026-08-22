@@ -74,10 +74,25 @@ class FakeDispatcher:
 
 
 class FakeHeos:
+    """Lazy about players, because the real one is.
+
+    `pyheos.Heos.players` is an empty dict until `get_players()` is called;
+    connecting does not populate it. An eager fake hid a real bug for the whole
+    life of this feature - the controller read `.players` straight after
+    connecting and got nothing on real hardware, while every test passed.
+    """
+
     def __init__(self, players: list[FakePlayer] | None = None) -> None:
-        self.players = {p.player_id: p for p in (players or [FakePlayer()])}
+        self._available = {p.player_id: p for p in (players or [FakePlayer()])}
+        self.players: dict[int, FakePlayer] = {}
+        self.load_count = 0
         self.dispatcher = FakeDispatcher()
         self.disconnected = False
+
+    async def get_players(self, *, refresh: bool = False) -> dict[int, FakePlayer]:
+        self.load_count += 1
+        self.players = dict(self._available)
+        return self.players
 
     async def disconnect(self) -> None:
         self.disconnected = True

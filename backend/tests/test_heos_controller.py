@@ -134,3 +134,18 @@ def test_stopping_disconnects_the_underlying_connection():
     controller, heos = build()
     asyncio.run(controller.stop())
     assert heos.disconnected is True
+
+
+def test_connecting_loads_the_player_list():
+    """The bug this whole feature shipped with.
+
+    `pyheos.Heos.players` is empty until `get_players()` is called - connecting
+    does not fill it. The controller used to read `.players` straight after
+    connecting, so against real speakers it reported none: the panel hid the
+    music UI entirely while `homedash-heos-probe`, which calls `get_players`
+    itself, cheerfully listed all three.
+    """
+    controller, heos = build([FakePlayer(player_id=1), FakePlayer(player_id=2)])
+
+    assert heos.load_count == 1, "connecting must ask for the player list"
+    assert [p["id"] for p in controller.players()] == [1, 2]
