@@ -514,7 +514,8 @@ single-calendar panel, where the legend renders nothing at all.
 | `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
 | `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
 | `NowPlayingBar.svelte` | The sticky strip under the calendar, while there is a track to act on |
-| `MusicOverlay.svelte` | Full-screen music, over the calendar and under the screensaver |
+| `MusicOverlay.svelte` | Full-screen music: Now Playing and Library tabs |
+| `MusicBrowser.svelte` | Artists → albums → tracks, one level at a time, with a history stack |
 | `NowPlaying.svelte` | Art, title, artist, album, progress |
 | `TransportControls.svelte` | Play/pause/skip/stop, inline SVG, compact and full |
 | `PlayerPicker.svelte` | Which speaker; renders nothing for a one-speaker household |
@@ -633,6 +634,13 @@ giving up the family photos exactly when people are in the kitchen. `idle.ts` li
 `window` with `capture`, so taps inside the music overlay already count as activity and it
 is never yanked away mid-browse — no extra wiring, unlike the screensaver, which swallows
 its own dismissing tap.
+
+With nothing playing there is no bar, so a **Music button** takes its place — the
+smallest thing that keeps the library reachable without giving the calendar's
+space to a permanent strip. The overlay opens on the Library tab when nothing is
+playing and on Now Playing when something is, and that default is **derived, not
+captured at construction**: the overlay can be opened before the first player
+snapshot arrives, and a value read then settles on the wrong tab and stays there.
 
 The bar shows while a track is **playing or paused**, not only while playing. Keying it on
 `play` alone made the bar vanish the instant you paused from it, taking the resume button

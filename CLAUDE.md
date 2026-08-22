@@ -539,6 +539,49 @@ hardware before the harder half depends on them.
 HEOS system and in real Chrome at both orientations. `homedash-heos-probe` is the
 first thing to run on the actual hardware.
 
+### The Jellyfin library (2026-08-22)
+
+The second half: browse a Jellyfin library on the panel and play it on the
+speakers.
+
+- **HomeDash is the stream origin**, and three independent limits force that
+  rather than it being a preference. HEOS will not fetch a URL over 255
+  characters and reports no error when it declines; it will not play `.m3u` or
+  `.pls`, and `browse/add_to_queue` only accepts ids from its own browse tree;
+  and Jellyfin removes query-parameter auth in 10.13. So the speaker fetches
+  `/api/music/s/{token}` and HomeDash proxies the bytes with a
+  header-authenticated request. `tokens.py` exists for that first number alone
+  and raises rather than letting an over-long URL reach a speaker.
+- **The queue's whole difficulty is that `stop` means three things** — between
+  two tracks, at the end of one, and somebody pressing stop. `awaiting_start`
+  separates the first; without it the queue consumes an entire album in a
+  fraction of a second with only the last track audible. Clearing on an explicit
+  stop separates the third; without it, stopping the music starts the next track.
+- **Skips go through the queue, not HEOS.** Content sent as a URL never enters
+  the speaker's own queue, so `play_next` has nothing to move to and does nothing
+  at all — a skip button that silently did nothing, which a wall panel hides very
+  well. A speaker playing from its own sources still falls through to it.
+- **Not gapless**, roughly a second between tracks, and not fixable this way.
+  Stated rather than left to be discovered.
+- **Two bugs worth remembering.** The library-wide `parentId` overwrote the
+  album's in `tracks()`, so asking for one album would have quietly returned the
+  whole library — it still renders and still plays, which is why it needed a test
+  rather than a look. And the browser's back button derived its parent instead of
+  keeping a history stack, so returning from a track list dropped you at the full
+  artist list rather than the artist you were in.
+- **A svelte-check warning that was a real bug:** the overlay's default tab was
+  captured at construction, and the overlay can open before the first player
+  snapshot arrives — so it settled on the wrong tab and stayed there. Derived now.
+
+Verified in real Chrome at both orientations against a fake Jellyfin, and
+separately through the real objects: an album walks t1 to t4 in order, clears
+itself at the end, and builds 45-character URLs against a 255-character limit.
+The proxy was checked over a real socket for full fetches, byte ranges with a
+correct 206 and `Content-Range`, and for keeping the API key in the header and
+out of the query string.
+
+**Also not yet run against real speakers or a real Jellyfin.**
+
 ---
 
 ## Future features (post-v1)
@@ -578,35 +621,8 @@ App-level, distinct from the device lockdown in Phase 3. PIN gate on editing, se
 
 ### Jellyfin → HEOS music
 
-*(The investigation is settled and the first half has landed — see "HEOS playback
-control" under "Landed after v1". What is left is the Jellyfin half: browse, the
-stream proxy, and the queue.)*
-
-**HEOS's native protocol, not generic DLNA.** It pushes change events down the same
-socket the commands go up, so speaker state arrives without polling; DLNA's equivalent
-would have HomeDash hosting a GENA callback endpoint and renewing subscriptions. HEOS
-also has multiroom grouping, which DLNA has no concept of. `pyheos` implements the
-protocol and has no transitive dependencies, so `upnpclient` is not needed at all.
-
-What remains, and the constraints it has to be built inside:
-
-- **HomeDash must be the stream origin.** Three separate limits force this: HEOS will
-  not fetch a URL over 255 characters (and reports no error when it declines), it will
-  not play `.m3u`/`.pls`, and Jellyfin is removing query-parameter auth entirely in
-  10.13. So HomeDash mints a short opaque token, the speaker fetches
-  `/api/music/s/{token}`, and HomeDash proxies the bytes with a header-authenticated
-  request. Same rule the Immich notes already state: never let the API key reach the
-  client.
-- **HomeDash owns the queue.** `browse/add_to_queue` only accepts ids from HEOS's own
-  browse tree, so an album cannot be handed over in one call. Hold the track list, fire
-  `play_stream` per track, advance on the finished event. This is **not gapless** —
-  roughly a one-second gap between tracks — and cannot be made so this way. The escape
-  hatch, if that turns out to be intolerable on the actual speakers, is routing playback
-  through Jellyfin's DLNA server as a HEOS browse source, which buys a native queue at
-  the cost of mapping two id spaces.
-- Jellyfin browse (artists → albums → tracks), a proxied/cached album-art endpoint, and
-  `MusicBrowser` inside the existing `MusicOverlay`.
-- Then polish: groups, and resume.
+*(Landed — see "HEOS playback control" and "The Jellyfin library" under "Landed
+after v1". Left for a third pass: multiroom groups, and resume.)*
 
 ### Chores and rewards
 
