@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
@@ -25,6 +25,8 @@ from app.config import get_settings
 from app.db import get_session
 from app.devices import screen_state, touch_last_seen
 from app.models import CalendarSource, Device, Event, EventInstance, Photo
+from app.music.heos import TRANSPORT_ACTIONS, HeosController
+from app.music.service import get_controller, music_configured
 from app.photos.derivatives import (
     PANEL_ORIENTATIONS,
     derivative_path,
@@ -373,3 +375,85 @@ async def event_stream(request: Request):
 @router.get("/api/events/stream")
 async def stream_events(request: Request) -> EventSourceResponse:
     return EventSourceResponse(event_stream(request))
+
+
+def _controller_or_503() -> HeosController:
+    """The music controller, or a clear reason there isn't one.
+
+    Three different states answer 503, and the panel shows none of them - it
+    just hides the music UI - so the detail string is written for whoever is
+    reading the logs or curling the endpoint.
+    """
+    if not music_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="music is not configured; set HOMEDASH_MUSIC_ENABLED and HOMEDASH_HEOS_HOST",
+        )
+    controller = get_controller()
+    if controller is None or not controller.connected:
+        raise HTTPException(
+            status_code=503, detail="not connected to HEOS yet; still retrying"
+        )
+    return controller
+
+
+@router.get("/api/music/players")
+def get_music_players() -> dict:
+    """Every speaker, with what it is doing right now.
+
+    Always 200 when music is configured, even before the connection is up, so
+    the panel can tell "no speakers yet" from "this panel has no music at all"
+    without treating an error as the answer. `connected` is what it switches on.
+    """
+    if not music_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="music is not configured; set HOMEDASH_MUSIC_ENABLED and HOMEDASH_HEOS_HOST",
+        )
+    controller = get_controller()
+    connected = controller is not None and controller.connected
+    return {
+        "connected": connected,
+        "players": controller.players() if controller is not None else [],
+    }
+
+
+@router.post("/api/music/players/{player_id}/transport")
+async def post_music_transport(player_id: int, body: dict = Body(default={})) -> dict:
+    """Play, pause, stop, next or previous on one speaker.
+
+    The first write path in this app. There is no auth on it: the panel has
+    none, and the household has settled for a LAN-only appliance. Worth knowing
+    rather than discovering - see the "kid lock" note in CLAUDE.md.
+    """
+    action = body.get("action")
+    if action not in TRANSPORT_ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"action must be one of {', '.join(TRANSPORT_ACTIONS)}",
+        )
+    controller = _controller_or_503()
+    try:
+        await controller.transport(player_id, action)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
+    return {"ok": True}
+
+
+@router.post("/api/music/players/{player_id}/volume")
+async def post_music_volume(player_id: int, body: dict = Body(default={})) -> dict:
+    """Set one speaker's volume, 0-100.
+
+    Clamping rather than rejecting an out-of-range number would hide a caller
+    bug behind a speaker that quietly went to full volume, which is a bad way
+    to find out about it in a kitchen.
+    """
+    level = body.get("level")
+    if not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= 100:
+        raise HTTPException(status_code=400, detail="level must be an integer from 0 to 100")
+    controller = _controller_or_503()
+    try:
+        await controller.set_volume(player_id, level)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
+    return {"ok": True}
