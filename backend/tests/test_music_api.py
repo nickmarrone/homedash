@@ -395,3 +395,72 @@ def test_an_unknown_stream_token_is_404_and_never_reaches_jellyfin():
         assert client.get("/api/music/s/not-a-token").status_code == 404
     finally:
         monkey.undo()
+
+
+# -- how a half-configured deployment announces itself ------------------------
+#
+# Both of these are about the log line and nothing else, which is unusual for a
+# test. It earns its place because the failure it guards against is *silence*:
+# a speaker address with the flag left off produced no log, no UI, and a 503
+# from a route the panel calls and discards, so the only evidence that anything
+# was wrong was the absence of a feature.
+
+
+def _start_music_with(monkeypatch, **overrides):
+    """Run start_music() against patched settings, without touching a network.
+
+    HeosController is replaced wholesale: this is about what start_music
+    decides, and building a real one would start an asyncio task looking for a
+    speaker that is not there.
+    """
+    from app.music import service
+
+    for key, value in overrides.items():
+        monkeypatch.setattr(service.settings, key, value)
+    monkeypatch.setattr(service, "HeosController", lambda *a, **k: _NullController())
+    service.start_music()
+
+
+class _NullController:
+    def start(self):
+        pass
+
+
+def test_a_speaker_address_with_the_flag_off_says_so(monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        _start_music_with(monkeypatch, music_enabled=False, heos_host="192.168.4.212")
+
+    assert "HOMEDASH_MUSIC_ENABLED" in caplog.text
+    # The address is echoed back so the line is self-evidently about *this*
+    # deployment rather than generic advice.
+    assert "192.168.4.212" in caplog.text
+
+
+def test_the_flag_on_with_no_speaker_address_says_so(monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        _start_music_with(monkeypatch, music_enabled=True, heos_host="")
+
+    assert "HOMEDASH_HEOS_HOST" in caplog.text
+
+
+def test_a_panel_with_no_music_at_all_stays_quiet(monkeypatch, caplog):
+    """The one case that must not warn: most panels have no speakers."""
+    with caplog.at_level("WARNING"):
+        _start_music_with(monkeypatch, music_enabled=False, heos_host="")
+
+    assert caplog.text == ""
+
+
+def test_a_configured_deployment_logs_that_it_is_starting(monkeypatch, caplog):
+    """Answers "did the feature start" without waiting on the speakers."""
+    with caplog.at_level("INFO"):
+        _start_music_with(
+            monkeypatch,
+            music_enabled=True,
+            heos_host="192.168.4.212",
+            jellyfin_url="",
+            jellyfin_api_key="",
+        )
+
+    assert "192.168.4.212" in caplog.text
+    assert "transport only" in caplog.text

@@ -57,6 +57,22 @@ def start_music() -> None:
                 "music is off. Set it to the IP of any one HEOS speaker - the "
                 "rest are enumerated over the connection to it."
             )
+        elif settings.heos_host and not settings.music_enabled:
+            # The other half-configuration, and the one that used to be
+            # completely silent. Somebody who has filled in a speaker address
+            # has plainly asked for music, so an unset flag is a mistake rather
+            # than a preference - and with nothing logged the only evidence was
+            # a 503 from a route the panel calls and discards.
+            logger.warning(
+                "HOMEDASH_HEOS_HOST is set to %s but HOMEDASH_MUSIC_ENABLED is not "
+                "true; music is off and every /api/music route will answer 503.",
+                settings.heos_host,
+            )
+        else:
+            # Neither is set: an ordinary panel with no speakers. Said once, at
+            # DEBUG, so that "is music even meant to be on here?" is answerable
+            # without reading the config.
+            logger.debug("No music configured; the music routes will answer 503.")
         return
 
     if library_configured():
@@ -75,6 +91,15 @@ def start_music() -> None:
 
     _controller = HeosController(
         settings.heos_host, on_change=_publish_change, on_state=_on_player_state
+    )
+    # Logged before the connection is attempted, not after it succeeds: the
+    # connect runs in a background task that may take a retry cycle or never
+    # succeed at all, and "did this feature start" has to be answerable
+    # separately from "did the speakers answer".
+    logger.info(
+        "Music enabled; connecting to HEOS at %s (library: %s)",
+        settings.heos_host,
+        "Jellyfin" if _library is not None else "none - transport only",
     )
     _controller.start()
 
