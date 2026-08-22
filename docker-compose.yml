@@ -43,6 +43,17 @@ services:
       HOMEDASH_PHOTO_MAX_COUNT: ${HOMEDASH_PHOTO_MAX_COUNT:-2000}
       HOMEDASH_SCREENSAVER_IDLE_MINUTES: ${HOMEDASH_SCREENSAVER_IDLE_MINUTES:-5}
       HOMEDASH_SCREENSAVER_DWELL_SECONDS: ${HOMEDASH_SCREENSAVER_DWELL_SECONDS:-30}
+      # Music: browse Jellyfin from the panel, play on the HEOS speakers.
+      # Off unless both the flag and a speaker address are set.
+      HOMEDASH_MUSIC_ENABLED: ${HOMEDASH_MUSIC_ENABLED:-false}
+      HOMEDASH_HEOS_HOST: ${HOMEDASH_HEOS_HOST:-}
+      # How the SPEAKER reaches HomeDash, which inside Docker is the host's LAN
+      # address and published port - never the container's own bridge IP, which
+      # the speaker cannot route to.
+      HOMEDASH_PUBLIC_BASE_URL: ${HOMEDASH_PUBLIC_BASE_URL:-}
+      HOMEDASH_JELLYFIN_URL: ${HOMEDASH_JELLYFIN_URL:-}
+      HOMEDASH_JELLYFIN_API_KEY: ${HOMEDASH_JELLYFIN_API_KEY:-}
+      HOMEDASH_JELLYFIN_MUSIC_LIBRARY_ID: ${HOMEDASH_JELLYFIN_MUSIC_LIBRARY_ID:-}
     restart: unless-stopped
 
 volumes:
