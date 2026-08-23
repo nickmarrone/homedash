@@ -84,8 +84,11 @@
 		margin: 1.5rem 0 0.1rem;
 	}
 
+	/* Enough air to sit under whatever precedes the list - the controls rule in
+	   agenda view, the "Coming up" label in portrait - without opening the gap a
+	   between-groups heading needs. */
 	section:first-child h2 {
-		margin-top: 0;
+		margin-top: 0.9rem;
 	}
 
 	ul {

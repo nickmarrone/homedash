@@ -563,7 +563,7 @@
 	   the groups. Two identical caps lines in a row need the air to read as a
 	   heading over a list rather than as one wrapped label. */
 	.upcoming h2 {
-		margin: 0 0 0.6rem;
+		margin: 0;
 	}
 
 	/* Portrait is 1080px wide on the wall panel, so the header's two halves no
