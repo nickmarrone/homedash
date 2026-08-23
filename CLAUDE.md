@@ -12,8 +12,10 @@
 > Everything below Phase 4 is post-v1; what has landed there is recorded under "Landed
 > after v1" — which now includes the whole music feature: HEOS playback control and the
 > Jellyfin library, browsed on the panel and played on the speakers — and as of
-> 2026-08-23 it has run on the real hardware. The other obvious next step is the Immich
-> photo source, which the `PhotoSource` protocol already has a seam for.
+> 2026-08-23 it has run on the real hardware. Also landed there: the panel's first
+> actual design, "Kitchen paper" - see that entry for what it changed and what it
+> cost. The other obvious next step is the Immich photo source, which the
+> `PhotoSource` protocol already has a seam for.
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -648,6 +650,73 @@ The second thing found by living with it: a playing track was captioned
 Verified in real Chrome at both orientations, which is what confirms a
 *relative* art URL resolves and actually paints rather than leaving the
 broken-image glyph the panel already had a fallback for.
+
+### Kitchen paper: the panel gets a design (2026-08-23)
+
+The panel had never been *designed*. Every colour in the frontend was either a
+browser system colour (`Canvas`/`CanvasText`, via `color-scheme: light dark`) or
+one of seven alphas of `rgba(128, 128, 128, x)`, and `HourlyForecast.svelte` said
+so in as many words: *"No color tokens in this app."* That themed for free while
+the panel was being built and never fought the OS. Read from across a kitchen it
+was a grey utility screen.
+
+Three directions were drawn as a design canvas first, on one screen each so the
+comparison was honest, then the winner across five. **B, "Kitchen paper"**, was
+picked: warm off-white ground, Newsreader for dates and titles against Figtree
+for anything measured, hairline rules instead of grey fills, and the calendar's
+colour as a rule beside the words rather than a tile behind them.
+
+- **`frontend/src/lib/theme.css` is the whole design layer** and the only global
+  stylesheet - `@font-face`, the tokens, and one `.caps` label class. Anything
+  that is a colour, a typeface, a radius or a tap target belongs there, so the
+  panel can be re-skinned from one file. It is imported from `+layout.svelte`
+  rather than the page, because the music overlay, the screensaver and the
+  bedtime blank all render outside the page's markup.
+- **The panel is light-committed now**, which is the direction's stated cost and
+  the reason `PALETTE` could move. The old constraint - 3:1 against *both*
+  `#ffffff` and `#1b1b1b` - is what forced mid-tones; there is one ground now, and
+  every entry clears 4.5:1 against it. It has to clear the *text* threshold rather
+  than the non-text one because an all-day event is set in its calendar's colour
+  rather than merely marked with it.
+- **Fonts are vendored, not linked.** The container serves the panel off the LAN,
+  so a Google Fonts `<link>` only works while the Pi happens to have internet -
+  and the failure mode is the whole panel falling back to a system serif at
+  different metrics, which nobody notices until the router reboots. Both faces are
+  SIL OFL. Six woff2 files, ~350KB, one per family per subset because both are
+  variable fonts.
+- **"Finished" had to be re-solved,** which the direction's notes predicted. It
+  leaned on fading text over a grey fill; with the fill gone, a fade stopped
+  reading as finished and started reading as faint. The strike is drawn in the
+  calendar's own colour and the accent rule mixes toward the paper's rule rather
+  than losing alpha - which was also changing its hue.
+- **The masthead states today's date**, which the panel did nowhere at all. The
+  one spot a family calendar has no use for was occupied by the product name.
+- **The almanac is one line instead of two right-aligned stacks.** `WeatherWidget`
+  was rendering the temperature and then four unrelated facts in a column beneath
+  it, with `SkyEvents` in a second row below that and the whole width beside them
+  empty. `Almanac.svelte` lays all of it along a single rule; `SkyEvents` renders
+  into that row with `display: contents` rather than forming one of its own.
+- **Three characters became SVG:** the sunrise line's `☀` (U+2600), which this
+  plan had already flagged, and the period nav's `‹`/`›`. All three would very
+  likely have survived on the Pi. The rule is that no glyph on the wall depends on
+  a font being there.
+- **Two component changes that are not skin.** The now-playing cover art goes from
+  `min(48vh, 420px)` to `min(46vh, 560px)`, because on a 1920-tall portrait panel
+  the old cap left it small from the distance that screen is actually read from.
+  And the volume slider is drawn rather than native: `accent-color` paints the
+  filled half but leaves the rest of the track the browser's cool grey, and turning
+  the appearance off also turns off the fill, so it is painted from a custom
+  property set from the same value the thumb sits at.
+- **The mockups dropped the AQI, the rain percentages and the third sky event** to
+  show the direction buying air. None of that was carried over: a restyle should
+  not quietly delete information the panel exists to show. Say the word and they
+  go.
+
+Verified in real Chrome at both 1920x1080 and 1080x1920 against a stubbed API,
+which is the only thing that catches a client-render failure - the backend suite
+stays green while the display is blank.
+
+---
 
 ---
 

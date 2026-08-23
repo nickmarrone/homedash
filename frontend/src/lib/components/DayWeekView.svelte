@@ -23,7 +23,12 @@
 <!-- Day columns rather than a scrolling hour grid. From across a kitchen the
      question is "what is on today", not "where exactly does 2pm sit", and this
      keeps one rendering path for day, the lookaheads, week, and month. -->
-<div class="columns" class:stacks={stacksWhenNarrow} style:--columns={columns}>
+<div
+	class="columns"
+	class:stacks={stacksWhenNarrow}
+	class:single={columns === 1}
+	style:--columns={columns}
+>
 	{#each days as day (day.date)}
 		<section class:today={day.is_today} class:past={today !== null && day.date < today}>
 			<h3>
@@ -209,6 +214,36 @@
 		background: color-mix(in srgb, var(--item-color) 40%, var(--rule));
 	}
 
+	/* A column with the whole panel to itself reads an event as one line - time,
+	   title, where - the way the agenda below it does. Day view is always that
+	   wide; week and the 5-day lookahead become that wide once they stack. Narrow
+	   columns cannot do it and keep stacking the three parts instead. */
+	.single li,
+	.columns.stacks li {
+		flex-direction: row;
+		align-items: baseline;
+		gap: 1rem;
+		padding-top: 0.3rem;
+		padding-bottom: 0.3rem;
+	}
+
+	.single .time,
+	.columns.stacks .time {
+		min-width: 8ch;
+		font-size: 0.9375rem;
+	}
+
+	.single .title,
+	.columns.stacks .title {
+		font-size: 1.1875rem;
+	}
+
+	.single .location,
+	.columns.stacks .location {
+		margin-left: auto;
+		font-size: 0.9375rem;
+	}
+
 	.time {
 		font-size: 0.8rem;
 		color: var(--ink-muted);
@@ -257,31 +292,6 @@
 			margin: 0 -0.85rem;
 			padding-left: 1.7rem;
 			padding-right: 1.7rem;
-		}
-
-		/* Stacked, a day gets the full width of the panel, so an event reads as
-		   one line - time, title, where - the way the agenda below it does.
-		   Narrow columns cannot do that and keep stacking instead. */
-		.columns.stacks li {
-			flex-direction: row;
-			align-items: baseline;
-			gap: 1rem;
-			padding-top: 0.3rem;
-			padding-bottom: 0.3rem;
-		}
-
-		.columns.stacks .time {
-			min-width: 8ch;
-			font-size: 0.9375rem;
-		}
-
-		.columns.stacks .title {
-			font-size: 1.1875rem;
-		}
-
-		.columns.stacks .location {
-			margin-left: auto;
-			font-size: 0.9375rem;
 		}
 	}
 

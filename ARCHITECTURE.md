@@ -17,6 +17,7 @@ conventions the code follows.
 ```
 backend/          FastAPI + SQLModel + APScheduler, a uv project (package `app`, src layout)
 frontend/         SvelteKit 5, adapter-static, compiled to plain files FastAPI serves
+frontend/static/  Served at the site root; holds the vendored woff2 files
 deploy/pi/        Raspberry Pi kiosk provisioning: setup script, screen agent, systemd units
 migrations/       (under backend/) Alembic revisions, run automatically at startup
 Dockerfile        Two stages: node builds the frontend, python serves it alongside the API
@@ -515,14 +516,19 @@ separate routes. `+layout.ts` is two lines: `prerender = true`, `ssr = false` �
 comes from client-side fetch and SSE against the running backend, so there is nothing to
 render at build time.
 
-`+layout.svelte` holds the global touch lockdown: `contextmenu` suppression via
-`<svelte:document>`, plus `touch-action: manipulation`, `-webkit-touch-callout: none`, and
-`user-select: none` on everything except inputs.
+`+layout.svelte` imports `lib/theme.css` and holds the global touch lockdown: `contextmenu`
+suppression via `<svelte:document>`, plus `touch-action: manipulation`,
+`-webkit-touch-callout: none`, and `user-select: none` on everything except inputs.
 
 `+page.svelte` owns all state and all data loading, and wires everything in a single
-`onMount` that returns a cleanup closure. Its header stacks weather, the sky strip, the
-hourly forecast, then a `.controls` row holding the calendar legend on the left and the view
-switcher on the right. The switcher is pushed right by `margin-left: auto` on its own
+`onMount` that returns a cleanup closure. Its header is a masthead — today's date on the
+left, the temperature on the right, under a thick-over-thin rule — then the almanac line,
+the hourly forecast, and a `.controls` row holding the calendar legend on the left and the
+view switcher on the right.
+
+The date in the masthead is the server's, from the heartbeat or the grid payload, so the
+header is empty until the first response lands and rolls over on its own at midnight. It is
+the only place the panel states the date at all; the slot used to hold the product name. The switcher is pushed right by `margin-left: auto` on its own
 wrapper rather than by `justify-content`, so it still sits against the right edge on a
 single-calendar panel, where the legend renders nothing at all.
 
@@ -531,7 +537,8 @@ single-calendar panel, where the legend renders nothing at all.
 | Module | Responsibility |
 |---|---|
 | `api.ts` | **All** types, all fetchers, and the SSE subscriber |
-| `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour`, `hasPassed`, `formatSkyDate`, `addDays` |
+| `theme.css` | The whole design layer: `@font-face`, the colour tokens, the `.caps` label class. Imported once from `+layout.svelte` |
+| `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour`, `formatMasthead`, `hasPassed`, `formatSkyDate`, `addDays` |
 | `watchdog.ts` | Reloads the page if the SSE stream goes quiet |
 | `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
@@ -550,10 +557,11 @@ single-calendar panel, where the legend renders nothing at all.
 | `DayWeekView.svelte` | Day, lookaheads and week as columns; column count comes from `days.length` |
 | `MonthGrid.svelte` | 7-column grid, 3 chips per cell then "+N more" |
 | `HourlyForecast.svelte` | 12-hour temperature and rain strip, one SVG in column units |
-| `PeriodNav.svelte` | ‹ / title / Today / › |
+| `PeriodNav.svelte` | Title / ‹ / Today / › — the chevrons are inline SVG, not characters |
 | `ViewSwitcher.svelte` | Agenda / Day / 3 Day / 5 Day / Week / Month segmented control |
-| `WeatherWidget.svelte` | Current conditions, H/L, sunrise/sunset, AQI, and the moon |
-| `SkyEvents.svelte` | One-line strip: the next three sky events, comets first |
+| `WeatherWidget.svelte` | The masthead's right half: the temperature and the description, nothing else |
+| `Almanac.svelte` | The line under the masthead rule: H/L, sunrise–sunset, AQI, the moon, then `SkyEvents` |
+| `SkyEvents.svelte` | The next three sky events, comets first. `display: contents`, so they join Almanac's row rather than forming one of their own |
 | `MoonGlyph.svelte` | The lunar disc as inline SVG, drawn from the real illuminated fraction |
 | `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
 | `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
@@ -583,20 +591,59 @@ single-calendar panel, where the legend renders nothing at all.
 
 ### Styling
 
-**No global stylesheet, no CSS variables, no Tailwind.** Scoped `<style>` blocks only, with
-two `:global()` escapes (the touch rules in `+layout.svelte`, and `html`/`body` in
-`+page.svelte`).
+**One global stylesheet — `lib/theme.css` — and scoped `<style>` blocks for everything
+else.** The design is called *Kitchen paper*: a warm off-white ground, a display serif for
+dates and titles, hairline rules instead of grey fills, and the calendar's colour as a rule
+beside the words rather than a tile behind them. `theme.css` is imported once, from
+`+layout.svelte` rather than `+page.svelte`, because the music overlay, the screensaver and
+the bedtime blank all render outside the page's markup and need the same tokens.
 
-Theming is purely `color-scheme: light dark` — components use `currentColor`, `Canvas`,
-`inherit`, and low-alpha greys (`rgba(128,128,128,0.08–0.3)`) that read in both. Per-item
-color arrives as an inline custom property (`style:--item-color`) mixed with `color-mix`.
+Anything that is a colour, a typeface, a radius or a tap target belongs in `theme.css`.
+Components keep their layout and nothing else, so the panel can be re-skinned from one file.
+
+| Token group | What it is |
+|---|---|
+| `--paper`, `--paper-raised`, `--paper-sunk`, `--wash` | Grounds. `raised` is white and marks today, and only today; `sunk` marks padding days |
+| `--ink`, `--ink-soft`, `--ink-muted`, `--ink-ghost`, `--ink-trace` | Text, in five steps. Ratios against `--paper` are 17.1 / 11.1 / 4.8 / 3.2 / 2.1 |
+| `--rule`, `--rule-soft`, `--rule-strong` | Hairlines — grid, list rows, outlined buttons |
+| `--rain` | The precipitation bars, deliberately neither ink nor a calendar accent |
+| `--accent-fallback` | An item with no calendar; mirrors `FALLBACK_COLOR` in `colors.py` |
+| `--font-display`, `--font-body` | Newsreader and Figtree |
+| `--tap`, `--radius-pill`, `--radius-sm` | 48px, and the two radii the direction keeps |
+
+**`.caps` is the one global utility class.** Small, bold, letterspaced, upper, muted — the
+direction's section label, used in the masthead, the agenda, both music screens and the
+now-playing strip. Six private copies would drift, which is the thing a design layer exists
+to prevent. It is global because Svelte scopes component styles to their own markup.
+
+**The panel is light-committed.** `color-scheme: light`, not `light dark`. This palette has
+no dark counterpart, and leaving the hint on has the browser paint form controls — the
+volume slider above all — for a theme the page does not have. It is also why `PALETTE` in
+`backend/src/app/calendars/colors.py` could move to deep tones: the old constraint was 3:1
+against *both* `#ffffff` and `#1b1b1b`, which forced mid-tones. There is one ground now, and
+every entry clears 4.5:1 against it — the text threshold rather than the non-text one,
+because an all-day event is *set* in its calendar's colour rather than merely marked with it.
+
+**No opacity ladder.** Fading text over an accent bar changed its hue as well as its weight,
+which is what made "finished" and "not this month" read as the same state. Both are now ink
+steps, and `.passed` mixes its accent rule toward `--rule` with `color-mix` rather than
+losing alpha. Per-item colour still arrives as an inline custom property
+(`style:--item-color` / `--chip-color`).
+
+**Typefaces are vendored, not linked.** `frontend/static/fonts/` holds six woff2 files —
+Newsreader roman and italic, Figtree, each in latin and latin-ext. The container serves the
+panel off the LAN, so a Google Fonts `<link>` would only work while the Pi happens to have
+internet, and the failure mode is the whole panel falling back to a system serif at
+different metrics. Both faces are SIL Open Font License. They are variable fonts, so one
+file covers each weight range; the vietnamese subsets Google also offers are left out.
 
 **No emoji, anywhere.** Raspberry Pi OS Lite ships no emoji font, so on that image every
 one renders as a tofu box on the actual wall panel. A desktop image does ship one — the
 rule stands anyway, because the panel has to survive either. This is why the moon is drawn as inline SVG
 (`MoonGlyph.svelte`) and `PHASE_NAMES` in `astro.py` carries names rather than glyphs — and
 it is a constraint on any future icon: text or inline SVG, never a character and never an
-icon font.
+icon font. The restyle closed the three places that were still characters: the sunrise line's
+`☀` (U+2600) and the period nav's `‹`/`›`.
 
 **Touch targets are 48px minimum** — "the smallest target that stays reliable for a
 fingertip on a wall panel, where you are often reaching rather than aiming." Press feedback
@@ -645,15 +692,16 @@ authoritative "today" they work from comes from the SSE heartbeat.
 
 Three treatments, all driven by the heartbeat rather than the browser clock:
 
-- **Finished events dim** (`.passed`) in all four views, via `hasPassed()`.
-- **Today is marked three ways, not one** — a 3px outline, a lifted background, and the word
-  itself: a "Today" flag in `DayWeekView`, a filled pill around the date in `MonthGrid`
-  (grey rather than an inverted swatch, so it holds in both themes without a palette). The
-  outline is inset, because cells sit 2px apart and a 3px line would otherwise read as
-  belonging to the neighbouring day.
-- **A day that is over dims its heading only.** The events inside already carry the finished
-  treatment, and fading the whole cell as well would multiply the two opacities into
-  something barely legible.
+- **Finished events are struck through** (`.passed`) in all four views, via `hasPassed()`.
+  The text drops to `--ink-ghost`, the strike is drawn in the calendar's own colour, and the
+  accent rule mixes toward `--rule`. It used to be opacity, which on a ruled table stopped
+  reading as "finished" and started reading as "faint".
+- **Today is marked two ways** — the one surface that goes whiter than the page, and its
+  date set in an ink disc. `DayWeekView` adds an inset ink edge and the word itself. It used
+  to carry three marks including a 3px outline, which a gapless grid has nowhere to put.
+- **A day that is over marks its heading only.** The events inside already carry the
+  finished treatment, and reducing the whole cell as well would put two reductions on top of
+  each other.
 
 `is_today` comes off the server's grid payload; the `.past` comparison uses the heartbeat's
 date. Neither asks the Pi what day it is.
