@@ -192,6 +192,158 @@ export async function fetchPhotos(orientation: PanelOrientation): Promise<PhotoP
 	return response.json();
 }
 
+/** One HEOS speaker, as the panel renders it. */
+export interface MusicPlayer {
+	id: number;
+	name: string;
+	model: string;
+	version: string;
+	available: boolean;
+	state: 'play' | 'pause' | 'stop' | 'unknown';
+	volume: number;
+	muted: boolean;
+	group_id: number | null;
+	now_playing: NowPlaying | null;
+	queue: MusicQueue | null;
+}
+
+/** What is on one speaker right now.
+ *
+ * Two sources behind one shape. When HomeDash owns the queue this is the
+ * Jellyfin track it sent, because a speaker handed a bare URL has no metadata
+ * for it and describes the stream instead - a bitrate where the title goes.
+ * Otherwise it is whatever the speaker itself reports about its own source.
+ * The panel does not need to know which; the server has already decided. */
+export interface NowPlaying {
+	title: string | null;
+	artist: string | null;
+	album: string | null;
+	image_url: string | null;
+	duration_ms: number | null;
+	position_ms: number | null;
+}
+
+/** What HomeDash is holding for a speaker, which the speaker cannot report -
+ * as far as it knows it was handed a single stream. */
+export interface MusicQueue {
+	position: number;
+	length: number;
+	remaining: number;
+	track: { id: string; title: string } | null;
+}
+
+export interface MusicPlayers {
+	/** False while the backend is still reaching the speakers, which is the
+	 * normal state at boot - they are usually asleep. The music UI stays
+	 * visible and simply shows nothing playing. */
+	connected: boolean;
+	/** Whether a Jellyfin library is configured. Speakers without one is a
+	 * coherent setup - the panel still controls what is already playing - so
+	 * the browse button is hidden rather than the whole music UI. */
+	library: boolean;
+	players: MusicPlayer[];
+}
+
+export interface LibraryArtist {
+	id: string;
+	name: string;
+	/** What the library sorted this artist under, which is not always the name
+	 * shown: Jellyfin files "The Beatles" as "Beatles, The". The A-Z rail jumps
+	 * by position in the list, so it has to index on this rather than on `name`
+	 * or its letters would not run downwards. */
+	sort_name: string;
+}
+
+export interface LibraryAlbum {
+	id: string;
+	name: string;
+	artist: string | null;
+	year: number | null;
+}
+
+export interface LibraryTrack {
+	id: string;
+	title: string;
+	artist: string | null;
+	album: string | null;
+	duration_ms: number | null;
+	track_number: number | null;
+}
+
+export type LibraryLevel = 'artists' | 'albums' | 'tracks';
+
+export async function fetchLibrary(
+	kind: LibraryLevel,
+	parent?: string
+): Promise<(LibraryArtist | LibraryAlbum | LibraryTrack)[]> {
+	const query = new URLSearchParams({ kind });
+	if (parent) query.set('parent', parent);
+	const response = await fetch(`/api/music/library?${query}`);
+	if (!response.ok) throw new Error(`library fetch failed: ${response.status}`);
+	return (await response.json()).items;
+}
+
+/** Cover art, proxied so the Jellyfin key never reaches the browser. */
+export function artUrl(itemId: string, size = 480): string {
+	return `/api/music/art/${itemId}?size=${size}`;
+}
+
+export async function playAlbum(playerId: number, albumId: string): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/play`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ album_id: albumId })
+	});
+	if (!response.ok) throw new Error(`play failed: ${response.status}`);
+}
+
+export async function playTracks(
+	playerId: number,
+	trackIds: string[],
+	parentAlbumId: string
+): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/play`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ track_ids: trackIds, parent_album_id: parentAlbumId })
+	});
+	if (!response.ok) throw new Error(`play failed: ${response.status}`);
+}
+
+export type TransportAction = 'play' | 'pause' | 'stop' | 'next' | 'previous';
+
+/** The speakers, or null if this panel has no music configured at all.
+ *
+ * The two cases are deliberately different: a 503 means there is nothing to
+ * show ever, and the caller hides the music UI outright, while a body with
+ * `connected: false` means the speakers are merely asleep. Throwing for the
+ * first would put a permanent error on a panel that is working exactly as
+ * configured. */
+export async function fetchMusicPlayers(): Promise<MusicPlayers | null> {
+	const response = await fetch('/api/music/players');
+	if (response.status === 503) return null;
+	if (!response.ok) throw new Error(`music fetch failed: ${response.status}`);
+	return response.json();
+}
+
+export async function sendTransport(playerId: number, action: TransportAction): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/transport`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action })
+	});
+	if (!response.ok) throw new Error(`transport failed: ${response.status}`);
+}
+
+export async function setPlayerVolume(playerId: number, level: number): Promise<void> {
+	const response = await fetch(`/api/music/players/${playerId}/volume`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ level })
+	});
+	if (!response.ok) throw new Error(`volume failed: ${response.status}`);
+}
+
 export interface Heartbeat {
 	/** The server's current date in the home timezone. The panel must not read
 	 * its own clock to decide the day has rolled over - see format.ts. */
@@ -204,7 +356,8 @@ export interface Heartbeat {
 }
 
 export interface UpdateStreamHandlers {
-	/** An "events.updated", "weather.updated" or "photos.updated" name. */
+	/** An "events.updated", "weather.updated", "photos.updated" or
+	 * "music.updated" name. */
 	onEvent: (eventType: string) => void;
 	onHeartbeat?: (heartbeat: Heartbeat) => void;
 	/** Fired when the stream reopens after dropping. EventSource retries on its
@@ -229,6 +382,7 @@ export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 	source.addEventListener('events.updated', forward);
 	source.addEventListener('weather.updated', forward);
 	source.addEventListener('photos.updated', forward);
+	source.addEventListener('music.updated', forward);
 
 	source.addEventListener('heartbeat', (event: MessageEvent) => {
 		handlers.onMessage?.();

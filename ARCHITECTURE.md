@@ -44,10 +44,11 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `api/serializers.py` | `serialize_instance` — the shared event wire shape |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
+| `music/` | The HEOS connection and the speakers the panel controls |
 | `weather/client.py` | Open-Meteo fetch and its in-process cache |
 | `astro.py` | Moon phase, meteor showers, equinoxes — computed, no I/O at all |
 | `comets.py` | MPC orbital elements: fetch, cache, propagate, filter to what is actually visible |
-| `cli/` | One-off operator commands (`homedash-google-auth`, `homedash-inspect-calendars`) |
+| `cli/` | One-off operator commands (`homedash-google-auth`, `homedash-inspect-calendars`, `homedash-heos-probe`) |
 
 ### `calendars/`
 
@@ -134,6 +135,136 @@ Orphaned derivatives are removed by a **sweep** at the end of each scan, not by 
 alongside each deleted row: two copies of one photo hash identically and share derivative
 files, so per-row unlinking would blank the surviving copy.
 
+### `music/`
+
+| Module | Responsibility |
+|---|---|
+| `base.py` | `MusicLibrary` protocol and the `Artist`/`Album`/`Track` shapes |
+| `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
+| `jellyfin.py` | `JellyfinLibrary`: browse three levels, and where the audio lives |
+| `tokens.py` | Short opaque stream tokens, and the 255-character check |
+| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold |
+| `service.py` | The process-wide singletons, and the switches that decide they exist |
+
+`queue.py` is the only module that knows about both halves — `heos.py` and
+`jellyfin.py` never import each other. The same one-way discipline
+`comets.py`/`astro.py` follow.
+
+**HEOS's own CLI protocol, not DLNA.** HEOS pushes change events down the same
+socket the commands go up, so a speaker's state arrives unprompted and turns
+straight into an SSE publish. The DLNA equivalent (GENA) would have HomeDash
+hosting a NOTIFY callback endpoint and renewing subscriptions, or polling
+`GetPositionInfo` forever. HEOS also has multiroom grouping, which DLNA has no
+concept of, and every speaker here is HEOS — so a second generic path would buy
+nothing and cost an inbound HTTP surface.
+
+`pyheos` owns the protocol: the serialized command lock, the heartbeat
+keepalive, reconnect with backoff, and demultiplexing unsolicited events from
+command responses. Same trade as `recurring-ical-events` in Phase 1, and it has
+no transitive dependencies.
+
+**This is the first long-lived outbound connection in the app.** Everything
+else reaches the network on an interval, fetches, and lets go. That is why it
+is an asyncio task started in the lifespan rather than an APScheduler job, and
+why `start_music()` returns the moment the task is created — the speakers are
+usually asleep at boot, and the calendar must not wait on them.
+
+**Nothing is persisted.** The speakers hold their own state and it is read back
+from them, so there is no row to reconcile and no way for a stored volume to
+disagree with the wall. This is the one subsystem with no seeder.
+
+**Connecting is not enough to have players.** `pyheos.Heos.players` stays an
+empty dict until `get_players()` is called, so `_run()` calls it once after
+connecting. Skipping it is not a partial failure — it presents as a healthy
+connection with no speakers, which the panel renders identically to a
+deployment that has no music configured. One call is also all that is needed
+for the lifetime of the process: pyheos re-loads players on reconnect only if
+they were ever loaded, so this is what arms that too.
+
+**An artist carries the name the library sorted it under.** Jellyfin files "The
+Beatles" as "Beatles, The" and returns the list in that order, so `Artist` has a
+`sort_name` alongside its display name and `/Artists` asks for `fields=SortName`
+explicitly. The panel's A–Z rail jumps by position in the list; indexed on the
+display name it would point its T at a row sitting between the As and the Cs.
+
+**Progress events are dropped.** HEOS emits one per second for the playing
+speaker. Each is a legitimate update, but forwarding them would put an SSE
+message per second per speaker onto a panel that only needs to know the track
+changed — so the position rides along on the next real update instead, and the
+now-playing bar is deliberately not animated between them.
+
+Three hardware limits shape everything above, none of them guessable:
+
+- **A URL over 255 characters is not played,** and no error is reported. This
+  is what forces HomeDash to be the stream origin rather than handing the
+  speaker a Jellyfin URL, and `homedash-heos-probe` refuses to send one rather
+  than letting it present as silence.
+- **`.m3u` and `.pls` are not played** — direct stream links only. So an album
+  cannot be handed over in one call, and `browse/add_to_queue` only accepts
+  ids from HEOS's own browse tree. HomeDash must own the queue.
+- **SSDP does not cross a Docker bridge network.** The host is configured, not
+  discovered; any one speaker's address will do, since `player/get_players`
+  returns the rest.
+
+**HomeDash is the stream origin, and all three limits force it.** The speaker
+fetches `/api/music/s/{token}` from HomeDash, which proxies the bytes from
+Jellyfin with a header-authenticated request: the URL stays short, no credential
+travels in it, and nothing depends on Jellyfin's query-parameter auth — which is
+deprecated in 10.11 and **removed in 10.13**.
+
+**The queue is HomeDash's, and it is not gapless.** One track is sent, and the
+next goes out when the speaker reports the first finished. There is roughly a
+second of silence between tracks; that is inherent to driving it this way. The
+escape hatch, if it ever matters, is routing playback through a DLNA server HEOS
+browses natively — a real queue, at the cost of mapping two id spaces.
+
+**Telling three identical `stop` events apart** is where the queue's actual
+logic lives. A speaker reports `stop` between two tracks, at the end of one, and
+when somebody presses stop. `awaiting_start` distinguishes the first (set when a
+track is sent, cleared only when the speaker reports `play` — a `pause` or an
+`unknown` says nothing about whether the track we sent is the one it is on), and
+clearing the queue on an explicit stop distinguishes the third. Getting the first
+wrong consumes an entire album in a fraction of a second with only the last track
+audible; getting the third wrong restarts music on somebody who just asked for
+silence.
+
+**Everything touching one speaker's queue is serialized behind a per-speaker
+lock,** held across the command sent to the speaker rather than just the state
+change. pyheos dispatches every pushed event as its own task, so a track ending
+and a finger on a new album genuinely run at the same time: the ending track
+sends its successor, the new album sends its first track, and whichever command
+wins the race inside pyheos is what plays. Heard on the wall, that is an album
+starting on the previous album's next song. The lock also restores the ordering
+of the events themselves — `asyncio.Lock` is FIFO, so a `stop` and the `play`
+that followed it can no longer be applied backwards — and it is why the transport
+route calls `QueueManager.stop()` rather than `clear()`: dropping the queue while
+the next track is still on its way would stop the music and let that command
+start it again. The locks are per speaker so one stalled command cannot hold up
+the album playing in the next room.
+
+**Skips go through the queue, not through HEOS.** Content sent as a URL never
+enters the speaker's own queue, so `play_next` has nothing to move to and does
+nothing at all. The route asks `QueueManager` first and falls through to the
+speaker only when there is no HomeDash queue — which is right for a speaker
+playing from one of its own sources.
+
+**HomeDash answers for the speaker about what is playing.** A speaker handed a
+bare URL has no metadata for it and falls back to describing the stream, so the
+panel showed a bitrate and a codec where the song title goes, and the speaker's
+own art URL — pointing at nothing — where the cover goes. Whenever there is a
+HomeDash queue, `GET /api/music/players` replaces `now_playing` with the
+Jellyfin track it actually sent: title, artist, album, its duration, and a
+cover at `/api/music/art/{album_id}`. Only `position_ms` is still the speaker's,
+because it is the only party that knows it. A speaker playing one of its own
+sources reports perfectly good metadata and keeps it.
+
+The album a cover lives on rides along on `Track.album_id` rather than being
+looked up again, because a queue can be started from an explicit list of tracks
+with no album in the request.
+
+The queue and the token store are in-process, like the weather cache. **A restart
+therefore stops the music after the current track.**
+
 ### Astronomy — `astro.py`, `comets.py`
 
 **Computed, not fetched.** Open-Meteo has no moon or meteor data, and every service that
@@ -180,6 +311,7 @@ run_migrations()
   → refresh_weather() in a thread executor     blocking HTTP, kept off the event loop
   → start_scheduler()
   → start_folder_watch(photos_dir, …)         after the scheduler, so the first scan is queued
+  → start_music()                              after bind_loop; returns at once, connects in background
 ```
 
 The frontend is mounted last, at `/`, with `html=True`. Starlette matches in registration
@@ -228,6 +360,13 @@ be mostly in the past — on a Sunday, a snapped three-day view is two days alre
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
 | `GET /api/photos?orientation=landscape\|portrait` | Screensaver playlist: each photo's slot, size, and hashed URL |
 | `GET /api/photos/{id}/image?orientation=&v=` | One pre-rendered JPEG derivative, `immutable` |
+| `GET /api/music/players` | The speakers, what each is playing, and its queue |
+| `GET /api/music/library?kind=artists\|albums\|tracks&parent=` | One level of the library |
+| `GET /api/music/art/{item_id}` | Proxied cover art, `max-age=3600` |
+| `POST /api/music/players/{id}/play` | `{album_id}` or `{track_ids, parent_album_id}` |
+| `POST /api/music/players/{id}/transport` | play / pause / stop / next / previous |
+| `POST /api/music/players/{id}/volume` | `{level}`, 0-100 |
+| `GET /api/music/s/{token}` | **Fetched by the speaker, not the panel.** Streaming audio proxy |
 | `GET /api/weather` | The weather cache, plus `astro` — the moon and the next few weeks of sky |
 | `GET /api/events/stream` | SSE (`EventSourceResponse`) |
 
@@ -236,12 +375,30 @@ build plain dicts; `serializers.py` exists only where two endpoints must emit an
 shape. Request params use `Query(...)` with manual validation raising `HTTPException(400)`.
 Routes stay thin — date arithmetic lives in `grid.py` and `devices.py`, not in handlers.
 
-The image endpoint is the only non-JSON response in the app. It is a pure file read — the
+`GET /api/music/s/{token}` is the app's only streaming response, and the only
+endpoint whose client is not a browser. It forwards the caller's `Range` header
+and passes `Content-Range`/`Accept-Ranges` back, because HEOS asks for ranges and
+Jellyfin already implements them correctly. The `httpx.AsyncClient` deliberately
+outlives the handler — the body is pulled long after it returns — so it is closed
+in the generator's `finally`, not a context manager. Browsing failures answer
+**502, not 500**: the fault is upstream, and the status is the difference between
+"check Jellyfin" and "check HomeDash" for whoever reads the log.
+
+The image endpoint is the only other non-JSON response in the app. It is a pure file read — the
 resize happened at index time, the same discipline the weather cache states for itself. Its
 URL carries the content hash as `v`, which is what makes `immutable` safe: a photo replaced
 in place gets a new URL rather than a cache entry the panel would hold for a year. The `v`
 value is deliberately *not* validated on the way in — it exists to change the URL, and
 rejecting a stale one would only turn a slightly old playlist into visible gaps.
+
+**The music routes are the app's first write path, and there is no auth on
+them.** The panel has none and the household has settled for a LAN-only
+appliance; open decision 3 and the "kid lock" future feature are what would
+change that. Reads and writes degrade differently on purpose: `GET
+/api/music/players` answers 200 with `connected: false` while the speakers are
+still asleep, because that is an ordinary cold start, but a command sent before
+the connection is up is refused rather than reporting a success the speaker
+never heard.
 
 `GET /api/devices/{id}/screen` writes `last_seen` as a side effect: the poll *is* the
 check-in, throttled to at most one write a minute. It is deliberately non-idempotent.
@@ -277,7 +434,9 @@ safe to call from APScheduler threads** (`loop.call_soon_threadsafe`); it silent
 before `bind_loop`. No per-subscriber filtering and no replay — every panel gets every
 event.
 
-Events: `events.updated`, `weather.updated`, `photos.updated`, `heartbeat`.
+Events: `events.updated`, `weather.updated`, `photos.updated`, `music.updated`,
+`heartbeat`. `music.updated` carries no payload — the panel re-reads
+`/api/music/players`, which keeps one source of truth for that wire shape.
 
 It also carries `screen` — whether the schedule says the display should be lit — which the
 panel needs so the screensaver doesn't start at bedtime. It rides the heartbeat rather than
@@ -378,6 +537,7 @@ single-calendar panel, where the legend renders nothing at all.
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
 | `calendarVisibility.ts` | localStorage set of hidden calendar ids |
+| `musicPreference.ts` | localStorage of the controlled speaker, and the fallback when it is gone |
 | `viewPreference.ts` | localStorage of the last-selected view |
 | `weatherCodes.ts` | WMO code → description |
 
@@ -397,6 +557,12 @@ single-calendar panel, where the legend renders nothing at all.
 | `MoonGlyph.svelte` | The lunar disc as inline SVG, drawn from the real illuminated fraction |
 | `Screensaver.svelte` | Full-screen photo slideshow with a two-layer crossfade |
 | `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
+| `NowPlayingBar.svelte` | The sticky strip under the calendar, while there is a track to act on |
+| `MusicOverlay.svelte` | Full-screen music: Now Playing and Library tabs |
+| `MusicBrowser.svelte` | Artists → albums → tracks, one level at a time, with a history stack and an A–Z rail |
+| `NowPlaying.svelte` | Art, title, artist, album, progress |
+| `TransportControls.svelte` | Play/pause/skip/stop, inline SVG, compact and full |
+| `PlayerPicker.svelte` | Which speaker; renders nothing for a one-speaker household |
 
 ### Idioms
 
@@ -435,6 +601,15 @@ icon font.
 **Touch targets are 48px minimum** — "the smallest target that stays reliable for a
 fingertip on a wall panel, where you are often reaching rather than aiming." Press feedback
 is `:active { transform: scale(0.97) }`, because hover does not exist on touch.
+
+The one deliberate exception is the A–Z rail in `MusicBrowser.svelte`: 27 letters down a
+1080px-tall panel are ~35px each and cannot be made bigger without ceasing to be an
+alphabet. It is therefore built as a *drag* rather than a set of taps — `letterAt()` maps a
+pointer's Y onto a slot against the rail's own box, so the gaps between letters are live
+too, and the whole strip is one pointer-captured gesture. Letters with nothing behind them
+stay in place, dimmed, and jump to the next letter that does have something: a rail whose
+letters move as the library grows is one you have to read instead of aim at. It appears
+only above 20 artists, and only on the artists level.
 
 ### Orientation
 
@@ -500,6 +675,30 @@ kitchen goes dark. It is deliberately not tap-to-dismiss — the screen is meant
 
 `screenOn` starts `true`, so a panel that has not had its first heartbeat shows the calendar
 rather than flashing black on every reload.
+
+**Music does not add a fourth state.** `NowPlayingBar` renders *inside* the calendar state,
+and `MusicOverlay` sits above the calendar at `z-index: 40` but below the screensaver at
+`100` and `PanelBlank` at `200` — so the order above is unchanged and bedtime still wins over
+anything playing.
+
+On idle the photos still take over, because that is what the screensaver is for; the track
+rides on top as a caption instead. The panel therefore answers "what is this song" without
+giving up the family photos exactly when people are in the kitchen. `idle.ts` listens on
+`window` with `capture`, so taps inside the music overlay already count as activity and it
+is never yanked away mid-browse — no extra wiring, unlike the screensaver, which swallows
+its own dismissing tap.
+
+With nothing playing there is no bar, so a **Music button** takes its place — the
+smallest thing that keeps the library reachable without giving the calendar's
+space to a permanent strip. The overlay opens on the Library tab when nothing is
+playing and on Now Playing when something is, and that default is **derived, not
+captured at construction**: the overlay can be opened before the first player
+snapshot arrives, and a value read then settles on the wrong tab and stays there.
+
+The bar shows while a track is **playing or paused**, not only while playing. Keying it on
+`play` alone made the bar vanish the instant you paused from it, taking the resume button
+with it; only a stopped speaker has nothing to offer. The screensaver caption is stricter
+and keys on `play`, since a paused track is not what the room is listening to.
 
 ### The watchdog
 

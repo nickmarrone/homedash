@@ -11,6 +11,7 @@ from app.calendars.sync import seed_calendars_from_settings
 from app.devices import seed_device_from_settings
 from app.config import get_settings
 from app.db import engine, run_migrations
+from app.music.service import start_music, stop_music
 from app.photos.observer import start_folder_watch
 from app.scheduler import run_photo_index, start_scheduler, stop_scheduler
 from app.sse import broadcaster
@@ -33,7 +34,12 @@ async def lifespan(app: FastAPI):
     # only reports what changes from here on, and a folder that was filled while
     # the container was down would otherwise wait for the interval to be seen.
     watch = start_folder_watch(settings.photos_dir, run_photo_index)
+    # After bind_loop, since its pushed events publish over SSE. Returns as
+    # soon as the task is created - the speakers are usually asleep at boot and
+    # the calendar must not wait on them.
+    start_music()
     yield
+    await stop_music()
     if watch is not None:
         watch.stop()
     stop_scheduler()

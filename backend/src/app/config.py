@@ -227,6 +227,34 @@ class Settings(BaseSettings):
     screensaver_idle_minutes: int = 5
     screensaver_dwell_seconds: int = 30
 
+    # Music: browse Jellyfin from the panel, play on the HEOS speakers.
+    #
+    # Off by default, and gating both the connection and the routes, for the
+    # same reason comets_enabled exists: a panel that is meant to be entirely
+    # self-contained should open no socket nobody asked for. It is also the
+    # first feature here with a write path, so it should be opt-in.
+    music_enabled: bool = False
+
+    # One speaker's address, not a discovery setting. SSDP is UDP multicast and
+    # does not cross a Docker bridge network, so the usual discovery finds
+    # nothing in the configuration this actually ships in. It does not need to:
+    # connecting to any one speaker and asking for the player list returns every
+    # player on the account.
+    heos_host: str = ""
+
+    # How the *speaker* reaches HomeDash, which is not how anything else does.
+    # The speaker fetches the audio itself, so this has to be an address on the
+    # LAN that it can route to - inside Docker the container only sees a bridge
+    # IP, which the speaker cannot. Getting this wrong looks like a speaker that
+    # accepts every command and plays silence.
+    public_base_url: str = ""
+
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
+    # Optional. Narrows browsing to one library when the server has several;
+    # empty means "search everything", which is right for most setups.
+    jellyfin_music_library_id: str = ""
+
     frontend_dist: Path = BACKEND_ROOT.parent / "frontend" / "build"
 
     @field_validator("calendars", mode="before")

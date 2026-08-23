@@ -10,8 +10,10 @@
 > Phase 3) — but it is no longer blocking: the panel goes dark either way.
 >
 > Everything below Phase 4 is post-v1; what has landed there is recorded under "Landed
-> after v1". The obvious next step is the Immich photo source, which the `PhotoSource`
-> protocol already has a seam for.
+> after v1" — which now includes the whole music feature: HEOS playback control and the
+> Jellyfin library, browsed on the panel and played on the speakers — and as of
+> 2026-08-23 it has run on the real hardware. The other obvious next step is the Immich
+> photo source, which the `PhotoSource` protocol already has a seam for.
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -466,8 +468,9 @@ The panel drifts into a photo slideshow when nobody's using it, and a tap brings
 
 ## Landed after v1
 
-Small changes that are neither a phase nor a future feature. Recorded here so the
-running narrative stays honest about what the panel actually does.
+Work that is not one of the numbered phases — small changes, and the parts of
+post-v1 features that have actually shipped. Recorded here so the running narrative
+stays honest about what the panel actually does.
 
 ### The week starts on Monday (2026-08-20)
 
@@ -494,6 +497,157 @@ Two views between Day and Week: `next3` and `next5`, labelled **3 Day** and **5 
 - Paging steps a whole window, so `›` never re-shows a day just seen, and the existing
   midnight rollover already resets the anchor — which is what keeps a lookahead left on the
   wall meaning "from now".
+
+### HEOS playback control (2026-08-22)
+
+The first half of Jellyfin → HEOS music: the protocol path, with no Jellyfin in it
+yet. It controls whatever the speakers are already playing, which was the point —
+it proves the socket, the pushed events and the reconnect behaviour against real
+hardware before the harder half depends on them.
+
+- **The DLNA question is answered: HEOS native.** See the future-features entry for
+  the reasoning and for what is left to build.
+- **`pyheos` rather than a hand-rolled telnet client.** The protocol has real sharp
+  edges — a serialized command lock, a heartbeat keepalive, reconnect backoff,
+  unsolicited events interleaved with command responses — and a maintained library
+  has already hit all of them. Zero transitive dependencies made it cheap.
+- **Four firsts, each decided rather than drifted into.** The first write path (POST
+  routes, and no auth in front of them). The first long-lived outbound connection (an
+  asyncio task in the lifespan, not an APScheduler job). The first mutable state that
+  is not seeded from config — except there is none, because the speakers hold their
+  own state and it is read back from them. And the audio proxy will be the first
+  streaming response, when the Jellyfin half lands.
+- **Reads and writes degrade differently.** `/api/music/players` answers 200 with
+  `connected: false` while the speakers are asleep, because that is an ordinary cold
+  start and the panel needs something to render. A command sent before the connection
+  is up is refused rather than reporting a success the speaker never heard.
+- **Progress events are dropped.** HEOS emits one per second per playing speaker;
+  forwarding them would wake the panel 3600 times an hour to move a progress bar a
+  pixel. The position rides along on the next real update.
+- **Two defects the backend suite could not have caught,** both found by driving real
+  Chrome against the panel. Album art that fails to load painted the browser's
+  broken-image glyph — the same class of problem as an emoji on a Pi, and just as
+  visible across a kitchen; it now falls back to the placeholder. And keying the
+  now-playing bar on `state === 'play'` made it vanish the instant you paused from
+  it, taking the resume button with it.
+- Music adds no fourth panel state: the bar renders inside the calendar, the overlay
+  sits below the screensaver, and `PanelBlank` still wins over everything. On idle the
+  photos still take over, with the track captioned on top.
+- `homedash-heos-probe` is the `screen_agent.py probe` of this feature — the hardware
+  questions here can only be answered by the hardware.
+
+**Since run against real speakers** (2026-08-23), which is where the queue race
+below was found. Everything else above was verified against a fake HEOS system
+and in real Chrome at both orientations, and held up.
+
+### The Jellyfin library (2026-08-22)
+
+The second half: browse a Jellyfin library on the panel and play it on the
+speakers.
+
+- **HomeDash is the stream origin**, and three independent limits force that
+  rather than it being a preference. HEOS will not fetch a URL over 255
+  characters and reports no error when it declines; it will not play `.m3u` or
+  `.pls`, and `browse/add_to_queue` only accepts ids from its own browse tree;
+  and Jellyfin removes query-parameter auth in 10.13. So the speaker fetches
+  `/api/music/s/{token}` and HomeDash proxies the bytes with a
+  header-authenticated request. `tokens.py` exists for that first number alone
+  and raises rather than letting an over-long URL reach a speaker.
+- **The queue's whole difficulty is that `stop` means three things** — between
+  two tracks, at the end of one, and somebody pressing stop. `awaiting_start`
+  separates the first; without it the queue consumes an entire album in a
+  fraction of a second with only the last track audible. Clearing on an explicit
+  stop separates the third; without it, stopping the music starts the next track.
+- **Skips go through the queue, not HEOS.** Content sent as a URL never enters
+  the speaker's own queue, so `play_next` has nothing to move to and does nothing
+  at all — a skip button that silently did nothing, which a wall panel hides very
+  well. A speaker playing from its own sources still falls through to it.
+- **Not gapless**, roughly a second between tracks, and not fixable this way.
+  Stated rather than left to be discovered.
+- **Two bugs worth remembering.** The library-wide `parentId` overwrote the
+  album's in `tracks()`, so asking for one album would have quietly returned the
+  whole library — it still renders and still plays, which is why it needed a test
+  rather than a look. And the browser's back button derived its parent instead of
+  keeping a history stack, so returning from a track list dropped you at the full
+  artist list rather than the artist you were in.
+- **A svelte-check warning that was a real bug:** the overlay's default tab was
+  captured at construction, and the overlay can open before the first player
+  snapshot arrives — so it settled on the wrong tab and stayed there. Derived now.
+
+Verified in real Chrome at both orientations against a fake Jellyfin, and
+separately through the real objects: an album walks t1 to t4 in order, clears
+itself at the end, and builds 45-character URLs against a 255-character limit.
+The proxy was checked over a real socket for full fetches, byte ranges with a
+correct 206 and `Content-Range`, and for keeping the API key in the header and
+out of the query string.
+
+**Since run against both** (2026-08-23) — see the entry below for what that
+turned up.
+
+### Two albums in a row, and an A-Z rail (2026-08-23)
+
+The first bug reported from actually living with the music feature: picking one
+album and then another sometimes played a song from the first.
+
+- **The queue was racing itself, and pyheos is why.** Its dispatcher runs every
+  pushed event as its own task, so "a track ended" and "somebody picked a new
+  album" are genuinely concurrent. The ending track sent its successor, the new
+  album sent its first track, and whichever command won the race inside pyheos
+  is what the speaker played - while HomeDash's queue was certain it was on the
+  new album. Fixed with a per-speaker lock held across the command, not just
+  the state change, which also restores the ordering of the events themselves.
+  The transport route's stop went the same way: clearing the queue while the
+  next track was in flight stopped the music and then let it start again.
+- **`awaiting_start` now clears only on `play`.** It used to clear on any
+  non-stop state, so a transient `pause` or `unknown` before the stream opened
+  would arm the queue to advance on the tail of the *previous* track.
+- **Replacing the queue was already the intent** - picking an album means "play
+  this and forget the rest". It was the race that broke it, not the design.
+- **Nothing about playback needs a browser open.** The queue lives in the
+  server, so the panel, a phone, or nothing at all makes no difference; that
+  was already true and is now written down where somebody will find it.
+- **The A-Z rail indexes on `sort_name`, not the displayed name.** Jellyfin
+  files "The Beatles" under B and returns the list in that order, so a rail
+  built from display names would point its T at a row between the As and the
+  Cs. `/Artists` now asks for `fields=SortName` and it rides through to the
+  panel.
+- **The rail is a drag, not 27 taps.** 27 letters on a 1080px panel are ~35px
+  each, well under this project's 48px rule and not fixable - so the gesture is
+  a pointer-captured scrub and the gaps between letters are live. Empty letters
+  stay put, dimmed, and jump to the next letter that has something.
+
+Verified in real Chrome at both orientations against a canned library
+(`tools/panel/music-shot.mjs` in the harness worktree), and the race has a
+regression test that fails without the lock.
+
+### The speaker was naming the song, and it should not have been (2026-08-23)
+
+The second thing found by living with it: a playing track was captioned
+`160kbps` and something about a codec, and the cover was missing.
+
+- **A HEOS speaker handed a bare URL has no metadata for it.** It describes
+  the stream instead - which is a perfectly sensible thing for it to do, and
+  exactly the wrong thing to put on a kitchen wall. The panel was rendering
+  `now_playing` straight from the speaker, so it was rendering the bitrate.
+- **HomeDash sent the track, so HomeDash answers for it.** Whenever there is a
+  HomeDash queue, `/api/music/players` replaces `now_playing` with the Jellyfin
+  track: title, artist, album, duration, and a cover proxied from
+  `/api/music/art/{album_id}`. The one field still taken from the speaker is
+  the position, which is the only thing it is the authority on.
+- **Server-side, not in the components.** Three surfaces read `now_playing` -
+  the bar, the overlay, and the screensaver caption - and one override fixed
+  all three without any of them learning that a queue exists.
+- **The album rides on the track** (`Track.album_id`), because a queue can be
+  started from an explicit list of tracks with no album in the request to go
+  back to. It falls back to the album that was browsed, which the request was
+  already scoped to, so a missing Jellyfin field cannot cost the cover.
+- **The override is scoped to a HomeDash queue.** A speaker playing Spotify or
+  a radio station reports good metadata and keeps it - taking that away would
+  have been a regression on the transport-only setup.
+
+Verified in real Chrome at both orientations, which is what confirms a
+*relative* art URL resolves and actually paints rather than leaving the
+broken-image glyph the panel already had a fallback for.
 
 ---
 
@@ -532,9 +686,10 @@ notes for why. They come back only if the shape of the household changes:
 
 App-level, distinct from the device lockdown in Phase 3. PIN gate on editing, settings, and member filter changes. Design the permission model in Phase 2 even if the UI lands here.
 
-### Jellyfin → DLNA / HEOS music
+### Jellyfin → HEOS music
 
-Browse a Jellyfin library and push playback to HEOS speakers over DLNA. Likely needs `upnpclient` or similar for device discovery, plus HEOS's own telnet-style CLI protocol on port 1255 for the parts DLNA doesn't cover. Investigate whether HEOS's native protocol is a better target than generic DLNA.
+*(Landed — see "HEOS playback control" and "The Jellyfin library" under "Landed
+after v1". Left for a third pass: multiroom groups, and resume.)*
 
 ### Chores and rewards
 
