@@ -47,18 +47,17 @@
 <div class="agenda">
 	{#each groups as group (group.key)}
 		<section>
-			<h2>{group.heading}</h2>
+			<h2 class="caps">{group.heading}</h2>
 			{#if group.items.length === 0}
 				<p class="empty">Nothing scheduled.</p>
 			{:else}
 				<ul>
 					{#each group.items as item (item.id)}
-						<li class:passed={hasPassed(group.key, item, today, now)}>
-							<span
-								class="bar"
-								style:background-color={item.calendar?.color ?? '#888'}
-								aria-hidden="true"
-							></span>
+						<li
+							style:--item-color={item.calendar?.color ?? 'var(--accent-fallback)'}
+							class:passed={hasPassed(group.key, item, today, now)}
+						>
+							<span class="bar" aria-hidden="true"></span>
 							<span class="time">{item.all_day ? 'All day' : formatTime(item.starts_at)}</span>
 							<span class="title">{item.title}</span>
 							{#if item.location}
@@ -73,20 +72,20 @@
 </div>
 
 <style>
-	.agenda {
-		font-size: 1.25rem;
-	}
-
 	.empty {
-		opacity: 0.6;
+		margin: 0.5rem 0 0;
+		font-style: italic;
+		color: var(--ink-trace);
 	}
 
+	/* .caps in theme.css supplies the letterspaced label treatment; only the
+	   spacing around it belongs to this component. */
 	h2 {
-		font-size: 1.1rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		opacity: 0.7;
-		margin: 1.5rem 0 0.5rem;
+		margin: 1.5rem 0 0.1rem;
+	}
+
+	section:first-child h2 {
+		margin-top: 0;
 	}
 
 	ul {
@@ -98,50 +97,63 @@
 	li {
 		display: flex;
 		align-items: baseline;
-		gap: 0.75rem;
-		padding: 0.6rem 0 0.6rem 0.75rem;
-		border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+		gap: 1rem;
+		padding: 0.7rem 0 0.7rem 0.85rem;
+		border-bottom: 1px solid var(--rule-soft);
 		position: relative;
+	}
+
+	/* Full-height accent rule in the owning calendar's colour - legible from
+	   across a room in a way a small dot is not. */
+	.bar {
+		position: absolute;
+		left: 0;
+		top: 0.5rem;
+		bottom: 0.5rem;
+		width: 3px;
+		background: var(--item-color);
 	}
 
 	/* An event that has already finished, marked the same way the grid views
 	   mark it. In portrait the agenda sits directly under the calendar, so the
 	   same appointment is on screen twice - showing it struck through in one
 	   place and at full strength in the other reads as a bug. */
-	.passed {
-		opacity: 0.45;
-	}
-
 	.passed .title {
-		font-weight: 500;
+		color: var(--ink-ghost);
+		font-weight: 400;
 		text-decoration: line-through;
+		text-decoration-color: var(--item-color);
 		text-decoration-thickness: 1px;
 	}
 
-	/* Full-height accent bar in the owning calendar's color - legible from
-	   across a room in a way a small dot is not. */
-	.bar {
-		position: absolute;
-		left: 0;
-		top: 0.35rem;
-		bottom: 0.35rem;
-		width: 4px;
-		border-radius: 2px;
+	.passed .time,
+	.passed .location {
+		color: var(--ink-trace);
+	}
+
+	.passed .bar {
+		background: color-mix(in srgb, var(--item-color) 40%, var(--rule));
 	}
 
 	.time {
-		min-width: 6ch;
-		opacity: 0.7;
-		font-variant-numeric: tabular-nums;
+		min-width: 8ch;
+		font-size: 1rem;
+		font-weight: 500;
+		color: var(--ink-muted);
 	}
 
+	/* The display face, because this is the one list on the panel that is read
+	   as prose rather than scanned as a table. */
 	.title {
 		flex: 1;
-		font-weight: 600;
+		font-family: var(--font-display);
+		font-size: 1.4rem;
+		font-weight: 500;
+		color: var(--ink);
 	}
 
 	.location {
-		opacity: 0.6;
-		font-size: 0.9em;
+		font-size: 0.9375rem;
+		color: var(--ink-muted);
 	}
 </style>

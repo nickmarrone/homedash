@@ -39,7 +39,7 @@
 				<ul>
 					{#each day.items as item (item.id)}
 						<li
-							style:--item-color={item.calendar?.color ?? '#888'}
+							style:--item-color={item.calendar?.color ?? 'var(--accent-fallback)'}
 							class:passed={hasPassed(day.date, item, today, now)}
 						>
 							<span class="bar" aria-hidden="true"></span>
@@ -66,95 +66,92 @@
 </div>
 
 <style>
+	/* Ruled columns rather than tinted cards. Side by side the rule between two
+	   days is a vertical one; stacked, it turns horizontal - same idea either
+	   way, and no fill in sight. */
 	.columns {
 		display: grid;
 		grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
-		gap: 0.5rem;
+		border-top: 1px solid var(--rule);
 	}
 
 	section {
-		padding: 0.5rem;
-		border-radius: 8px;
-		background: rgba(128, 128, 128, 0.08);
+		padding: 0.75rem 0.85rem 1rem;
+		border-right: 1px solid var(--rule);
 		min-height: 12rem;
 	}
 
-	/* Today has to win at a glance from across the room, so it is marked three
-	   ways rather than one: a heavier border, a lifted background, and the word
-	   itself. The outline is inset so a thicker line cannot spill into the
-	   2px column gap and look like it belongs to the neighbouring day. */
+	section:last-child {
+		border-right: none;
+	}
+
+	/* Today is the one day on white paper, with an ink edge and the same disc
+	   the month grid sets its date in. It used to carry three marks - outline,
+	   lifted background, and the word - which on a ruled table is two too many. */
 	.today {
-		outline: 3px solid currentColor;
-		outline-offset: -2px;
-		background: rgba(128, 128, 128, 0.2);
+		background: var(--paper-raised);
+		box-shadow: inset 3px 0 0 var(--ink);
 	}
 
 	/* A day that is over dims its heading only. The events inside carry their
-	   own finished treatment, and fading the column as well would multiply the
-	   two opacities into something barely legible. */
-	.past h3 {
-		opacity: 0.55;
+	   own finished treatment, and fading the column as well would put two
+	   reductions on top of each other. */
+	.past h3 .weekday,
+	.past h3 .daynum {
+		color: var(--ink-trace);
 	}
 
 	h3 {
 		display: flex;
-		align-items: baseline;
-		gap: 0.4rem;
-		margin: 0 0 0.5rem;
+		align-items: center;
+		gap: 0.6rem;
+		margin: 0 0 0.7rem;
 		font-size: 1rem;
+		font-weight: 400;
 	}
 
 	.weekday {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.18em;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		opacity: 0.6;
-		font-size: 0.85rem;
+		color: var(--ink-muted);
 	}
 
 	.daynum {
-		font-size: 1.2rem;
-		font-variant-numeric: tabular-nums;
+		font-family: var(--font-display);
+		font-size: 1.6rem;
+		font-weight: 500;
+		line-height: 1;
+		color: var(--ink);
 	}
 
 	.today .daynum {
-		font-weight: 700;
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		border-radius: var(--radius-pill);
+		background: var(--ink);
+		color: var(--paper);
+		font-weight: 600;
 	}
 
 	.flag {
 		margin-left: auto;
-		padding: 0.05rem 0.4rem;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.45);
-		font-size: 0.7rem;
-		font-weight: 700;
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.18em;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	/* An event that has already finished. Kept on screen rather than hidden -
-	   "what happened today" is half of what a family reads off the wall in the
-	   evening - but pushed behind everything still to come. The colour bar
-	   fades with it, or a finished event would still carry the loudest mark in
-	   the column.
-
-	   Applied the same way on every day, not just today: an appointment that
-	   happened last Tuesday is no less finished than one that ended an hour
-	   ago, and treating the two differently makes the strike-through look like
-	   it means something else. */
-	.passed {
-		opacity: 0.45;
-	}
-
-	.passed .title {
-		font-weight: 500;
-		text-decoration: line-through;
-		text-decoration-thickness: 1px;
+		color: var(--ink);
 	}
 
 	.empty {
 		margin: 0;
-		opacity: 0.5;
+		padding-left: 0.8rem;
 		font-size: 0.9rem;
+		font-style: italic;
+		color: var(--ink-trace);
 	}
 
 	ul {
@@ -163,63 +160,128 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
+		gap: 0.5rem;
 	}
 
 	li {
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		padding: 0.3rem 0.3rem 0.3rem 0.6rem;
-		border-radius: 4px;
-		background: color-mix(in srgb, var(--item-color) 14%, transparent);
+		padding: 0.15rem 0.2rem 0.15rem 0.8rem;
 	}
 
-	/* Full-height accent bar in the owning calendar's color - legible from
-	   across a room in a way a small dot is not. */
+	/* Full-height accent rule in the owning calendar's colour - legible from
+	   across a room in a way a small dot is not, and now the only thing on the
+	   row that is coloured at all. */
 	.bar {
 		position: absolute;
 		left: 0;
-		top: 0.2rem;
-		bottom: 0.2rem;
+		top: 0.1rem;
+		bottom: 0.1rem;
 		width: 3px;
-		border-radius: 2px;
 		background: var(--item-color);
+	}
+
+	/* An event that has already finished. Kept on screen rather than hidden -
+	   "what happened today" is half of what a family reads off the wall in the
+	   evening - but pushed behind everything still to come, with the strike
+	   drawn in the calendar's own colour so it reads as finished rather than
+	   merely faint.
+
+	   Applied the same way on every day, not just today: an appointment that
+	   happened last Tuesday is no less finished than one that ended an hour ago,
+	   and treating the two differently makes the strike look like it means
+	   something else. */
+	.passed .title {
+		color: var(--ink-ghost);
+		font-weight: 400;
+		text-decoration: line-through;
+		text-decoration-color: var(--item-color);
+		text-decoration-thickness: 1px;
+	}
+
+	.passed .time,
+	.passed .location {
+		color: var(--ink-trace);
+	}
+
+	.passed .bar {
+		background: color-mix(in srgb, var(--item-color) 40%, var(--rule));
 	}
 
 	.time {
 		font-size: 0.8rem;
-		opacity: 0.7;
-		font-variant-numeric: tabular-nums;
+		color: var(--ink-muted);
 	}
 
 	.title {
-		font-weight: 600;
-		font-size: 0.95rem;
+		font-size: 1rem;
+		font-weight: 500;
+		color: var(--ink);
 	}
 
 	.location {
 		font-size: 0.8rem;
-		opacity: 0.6;
+		color: var(--ink-muted);
 	}
 
-	/* One column per day stops working long before a phone-sized screen, and
-	   it never works in portrait: the wall panel is 1080px wide that way up,
-	   which is wider than this breakpoint, so seven columns would survive at
-	   ~150px each. Orientation is checked as well as width for that reason.
+	/* One column per day stops working long before a phone-sized screen, and it
+	   never works in portrait: the wall panel is 1080px wide that way up, which
+	   is wider than this breakpoint, so seven columns would survive at ~150px
+	   each. Orientation is checked as well as width for that reason.
 
 	   Only the wide views collapse here. A 3-day lookahead gets ~350px per
 	   column at that width, which is comfortable, and stacking it would throw
-	   away the side-by-side comparison the view exists for. */
+	   away the side-by-side comparison the view exists for.
+
+	   Stacked, the rules turn horizontal and today's ink edge is bled into the
+	   page's own margin so the white band reads as a strip across the panel
+	   rather than a box floating in it. */
 	@media (max-width: 60rem), (orientation: portrait) {
 		.columns.stacks {
 			grid-template-columns: minmax(0, 1fr);
+			border-top: none;
 		}
 
-		/* Stacked days only need to be as tall as their contents; the fixed
-		   minimum exists to keep side-by-side columns even. */
 		.columns.stacks section {
 			min-height: 0;
+			border-right: none;
+			border-bottom: 1px solid var(--rule-soft);
+		}
+
+		.columns.stacks section:last-child {
+			border-bottom: none;
+		}
+
+		.columns.stacks .today {
+			margin: 0 -0.85rem;
+			padding-left: 1.7rem;
+			padding-right: 1.7rem;
+		}
+
+		/* Stacked, a day gets the full width of the panel, so an event reads as
+		   one line - time, title, where - the way the agenda below it does.
+		   Narrow columns cannot do that and keep stacking instead. */
+		.columns.stacks li {
+			flex-direction: row;
+			align-items: baseline;
+			gap: 1rem;
+			padding-top: 0.3rem;
+			padding-bottom: 0.3rem;
+		}
+
+		.columns.stacks .time {
+			min-width: 8ch;
+			font-size: 0.9375rem;
+		}
+
+		.columns.stacks .title {
+			font-size: 1.1875rem;
+		}
+
+		.columns.stacks .location {
+			margin-left: auto;
+			font-size: 0.9375rem;
 		}
 	}
 
@@ -227,10 +289,13 @@
 	@media (max-width: 40rem) {
 		.columns {
 			grid-template-columns: minmax(0, 1fr);
+			border-top: none;
 		}
 
 		section {
 			min-height: 0;
+			border-right: none;
+			border-bottom: 1px solid var(--rule-soft);
 		}
 	}
 </style>

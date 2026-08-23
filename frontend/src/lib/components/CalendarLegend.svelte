@@ -58,7 +58,7 @@
 	.legend {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
+		gap: 0 1.25rem;
 		list-style: none;
 		/* No margin of its own: it sits in a centre-aligned row beside the view
 		   switcher, and a top margin there offsets the chips below the
@@ -67,20 +67,22 @@
 		padding: 0;
 	}
 
+	/* No pill behind it. The swatch already says which calendar this is, and a
+	   grey capsule around every one of them was three more filled rectangles on
+	   a panel this direction is trying to keep to paper and rules. The tap
+	   target is unchanged - it is the height that makes a target reliable, not
+	   the fill that shows where it is. */
 	.toggle {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
-		/* 48px: the smallest target that stays reliable for a fingertip on a
-		   wall panel, where you are often reaching rather than aiming. */
-		min-height: 48px;
-		padding: 0.4rem 1rem 0.4rem 0.7rem;
+		gap: 0.55rem;
+		min-height: var(--tap);
+		padding: 0 0.15rem;
 		border: none;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
-		color: inherit;
+		background: transparent;
+		color: var(--ink);
 		font: inherit;
-		font-size: 1rem;
+		font-size: 1.0625rem;
 		cursor: pointer;
 		/* Skips the browser's 300ms double-tap-to-zoom wait, so the toggle
 		   feels immediate under a finger. */
@@ -95,31 +97,33 @@
 	}
 
 	.toggle:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 
 	.is-hidden .name {
-		opacity: 0.5;
+		color: var(--ink-ghost);
 	}
 
 	.swatch {
-		width: 1.5rem;
-		height: 1.5rem;
+		width: 1.1rem;
+		height: 1.1rem;
 		border: 2px solid;
-		border-radius: 6px;
+		border-radius: var(--radius-sm);
 		display: grid;
 		place-items: center;
 		flex-shrink: 0;
 		box-sizing: border-box;
 	}
 
-	/* White reads on every palette entry: all eight clear 3:1 against white by
-	   construction, which is what made them safe on a light background too. */
+	/* The paper, not white: the tick is punched out of the swatch, so it has to
+	   be the colour the panel would show through. Every palette entry clears
+	   4.5:1 against it by construction, which is the same property that lets an
+	   all-day event be set in its calendar's colour. */
 	.check {
-		width: 1rem;
-		height: 1rem;
-		color: #fff;
+		width: 0.7rem;
+		height: 0.7rem;
+		color: var(--paper);
 	}
 
 	.name {

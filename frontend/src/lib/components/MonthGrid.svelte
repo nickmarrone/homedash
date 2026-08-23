@@ -38,7 +38,7 @@
 						class="chip"
 						class:allday={item.all_day}
 						class:passed={hasPassed(day.date, item, today, now)}
-						style:--chip-color={item.calendar?.color ?? '#888'}
+						style:--chip-color={item.calendar?.color ?? 'var(--accent-fallback)'}
 					>
 						{#if !item.all_day}
 							<span class="chiptime">{formatTime(item.starts_at)}</span>
@@ -55,19 +55,33 @@
 </div>
 
 <style>
+	/* A ruled table, not a field of boxes: no gaps, no radii, no fills. The
+	   lines do the separating the way a printed calendar does it, which is what
+	   gives 42 cells a structure you can read across a kitchen. The grid carries
+	   its top and left rules and every cell carries its right and bottom, so
+	   there is exactly one line between any two cells. */
 	.weekdays,
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(7, minmax(0, 1fr));
-		gap: 2px;
+	}
+
+	.grid {
+		border-top: 1px solid var(--rule);
+		border-left: 1px solid var(--rule);
+	}
+
+	.weekdays {
+		padding-bottom: 0.4rem;
 	}
 
 	.weekdays span {
-		padding: 0.4rem 0.5rem;
-		font-size: 0.85rem;
+		padding-left: 0.55rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.18em;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		opacity: 0.6;
+		color: var(--ink-muted);
 	}
 
 	.cell {
@@ -76,62 +90,72 @@
 		min-height: 7.5rem;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		padding: 0.35rem;
-		border-radius: 6px;
-		background: rgba(128, 128, 128, 0.08);
+		gap: 0.3rem;
+		padding: 0.45rem 0.5rem 0.55rem;
+		border-right: 1px solid var(--rule);
+		border-bottom: 1px solid var(--rule);
 		overflow: hidden;
 	}
 
-	/* Padding days are dimmed rather than blank: the grid stays rectangular
-	   and the eye still reads the month boundary. */
+	/* Padding days are sunk rather than faded: opacity on the cell would take
+	   the chips inside down with it, and a half-strength accent bar reads as a
+	   finished event rather than as another month. */
 	.outside {
-		opacity: 0.35;
+		background: var(--paper-sunk);
 	}
 
-	/* Today has to be findable in a 42-cell grid from across the room, so it
-	   gets a heavier border and a lifted background rather than the hairline
-	   outline it had. Inset, because the cells are 2px apart and a 3px outline
-	   would otherwise read as belonging to the neighbouring day. */
+	.outside .daynum {
+		color: var(--ink-trace);
+	}
+
+	/* Today is the sheet the rest is printed on - the one cell that goes whiter
+	   than the page - and its date is set in an ink disc. Two marks instead of
+	   the three it used to carry, and no outline, which on a gapless grid would
+	   have had nowhere to sit. */
 	.today {
-		outline: 3px solid currentColor;
-		outline-offset: -2px;
-		background: rgba(128, 128, 128, 0.2);
-	}
-
-	/* A day already gone dims its date only. The chips inside carry their own
-	   finished treatment, and fading the whole cell as well would multiply the
-	   two opacities into something barely legible. */
-	.past .daynum {
-		opacity: 0.45;
+		background: var(--paper-raised);
 	}
 
 	.daynum {
-		font-size: 0.95rem;
-		font-variant-numeric: tabular-nums;
-		opacity: 0.75;
+		font-family: var(--font-display);
+		font-size: 1.3rem;
+		font-weight: 500;
+		line-height: 1.05;
+		color: var(--ink-muted);
 	}
 
-	/* A filled pill, the way a phone calendar marks today. Grey rather than an
-	   inverted swatch so it holds up in both themes without a palette. */
+	/* A day already gone marks its date only. The chips inside carry their own
+	   finished treatment. */
+	.past .daynum {
+		color: var(--ink-trace);
+	}
+
 	.today .daynum {
 		align-self: flex-start;
-		padding: 0.05rem 0.45rem;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.45);
-		font-weight: 700;
-		opacity: 1;
+		display: grid;
+		place-items: center;
+		width: 2.125rem;
+		height: 2.125rem;
+		margin: -0.2rem 0 0.05rem -0.2rem;
+		border-radius: var(--radius-pill);
+		background: var(--ink);
+		color: var(--paper);
+		font-weight: 600;
 	}
 
+	/* Colour as a rule beside the words, never as a tile behind them. A tinted
+	   fill per chip put 40 competing rectangles on the panel; the rule says the
+	   same thing and leaves the paper alone. */
 	.chip {
 		display: flex;
 		align-items: baseline;
 		gap: 0.3rem;
-		padding: 0.1rem 0.3rem;
+		padding-left: 0.5rem;
 		border-left: 3px solid var(--chip-color);
-		border-radius: 3px;
-		background: color-mix(in srgb, var(--chip-color) 16%, transparent);
 		font-size: 0.85rem;
+		font-weight: 500;
+		line-height: 1.25;
+		color: var(--ink);
 		/* One line per chip: wrapping would make cell heights uneven and the
 		   grid unreadable from across a room. */
 		white-space: nowrap;
@@ -139,25 +163,33 @@
 		text-overflow: ellipsis;
 	}
 
-	/* An all-day item reads as a banner rather than an appointment. */
+	/* An all-day item reads as a banner rather than an appointment - underlined
+	   in its calendar's colour and set in it, which is why every palette entry
+	   now has to clear the *text* contrast threshold. */
 	.allday {
-		background: var(--chip-color);
-		color: #fff;
-		border-left-color: transparent;
+		border-left: none;
+		padding-left: 0;
+		padding-bottom: 0.2rem;
+		border-bottom: 1.5px solid var(--chip-color);
+		color: var(--chip-color);
+		font-weight: 700;
+		font-size: 0.8rem;
 	}
 
-	/* An event that has already finished, on any day. Struck through as well as
-	   faded, because a fade alone is easy to mistake for one of the
-	   padding-day dims the grid is already full of. */
+	/* An event that has already finished, on any day. The strike is drawn in the
+	   calendar's own colour: with no grey fill left to lean on, fading the text
+	   alone stopped reading as "finished" and started reading as "faint". */
 	.passed {
-		opacity: 0.5;
+		color: var(--ink-ghost);
+		font-weight: 400;
+		border-left-color: color-mix(in srgb, var(--chip-color) 40%, var(--rule));
 		text-decoration: line-through;
+		text-decoration-color: var(--chip-color);
 		text-decoration-thickness: 1px;
 	}
 
 	.chiptime {
-		opacity: 0.75;
-		font-variant-numeric: tabular-nums;
+		color: var(--ink-muted);
 	}
 
 	.chiptitle {
@@ -166,23 +198,34 @@
 	}
 
 	.more {
-		font-size: 0.8rem;
-		opacity: 0.6;
-		padding-left: 0.3rem;
+		font-size: 0.75rem;
+		font-style: italic;
+		color: var(--ink-ghost);
+		padding-left: 0.5rem;
 	}
 
 	/* Portrait keeps all seven columns - a month grid is seven columns by
-	   definition - but they are ~150px wide, so the cells give back the height
+	   definition - but they are ~140px wide, so the cells give back the height
 	   they were using to spread out and the chips lose their time prefix
 	   rather than ellipsing every title away. */
 	@media (orientation: portrait) {
 		.cell {
-			min-height: 4.5rem;
+			min-height: 5rem;
+			padding: 0.35rem 0.4rem 0.45rem;
+		}
+
+		.daynum {
+			font-size: 1.15rem;
+		}
+
+		.today .daynum {
+			width: 1.85rem;
+			height: 1.85rem;
 		}
 
 		.chip {
 			font-size: 0.75rem;
-			padding: 0.1rem 0.2rem;
+			padding-left: 0.4rem;
 		}
 
 		.chiptime {

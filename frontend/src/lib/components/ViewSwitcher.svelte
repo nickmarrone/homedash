@@ -35,40 +35,38 @@
 <style>
 	.switcher {
 		display: flex;
-		/* Six options no longer fit on one line beside the legend on a
-		   portrait panel, which is 1080px wide. Wrapping keeps every option
-		   reachable rather than letting the row overflow off-screen. */
+		/* Six options no longer fit on one line beside the legend on a portrait
+		   panel, which is 1080px wide. Wrapping keeps every option reachable
+		   rather than letting the row overflow off-screen. */
 		flex-wrap: wrap;
-		gap: 0.25rem;
-		padding: 0.25rem;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
 	}
 
 	button {
-		/* 48px: the smallest target that stays reliable for a fingertip on a
-		   wall panel, where you are often reaching rather than aiming. */
-		min-height: 48px;
-		/* Trimmed from 1.25rem when the lookaheads took the count from four
-		   options to six; 48px of height is what actually makes a target
-		   reliable for a fingertip, and that is untouched. */
-		padding: 0 1rem;
+		/* 48px of height is what makes a target reliable for a fingertip on a
+		   wall panel, where you are reaching rather than aiming. */
+		min-height: var(--tap);
+		padding: 0 0.9rem;
 		border: none;
-		border-radius: 999px;
+		/* The selected mark is an underline, so every button carries a
+		   transparent one and only the width of the row changes. */
+		border-bottom: 2px solid transparent;
 		background: transparent;
-		color: inherit;
+		color: var(--ink-muted);
 		font: inherit;
-		font-size: 1rem;
+		font-size: 1.0625rem;
 		cursor: pointer;
 		/* Skips the browser's 300ms double-tap-to-zoom wait. */
 		touch-action: manipulation;
 		-webkit-tap-highlight-color: transparent;
 	}
 
+	/* Underlined rather than a raised pill, the way a printed index marks the
+	   page you are on. It sits on the controls row's own rule, so the mark is
+	   the page's rule thickening under one word. */
 	.selected {
-		background: Canvas;
+		color: var(--ink);
 		font-weight: 600;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+		border-bottom-color: var(--ink);
 	}
 
 	/* Press feedback replaces hover, which does not exist on touch. */
@@ -77,7 +75,7 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 </style>
