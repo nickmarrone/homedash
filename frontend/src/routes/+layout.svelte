@@ -1,5 +1,10 @@
 <script lang="ts">
 	import favicon from '$lib/assets/favicon.svg';
+	// The panel's whole design layer - vendored typefaces, the colour tokens
+	// and the one global label class. Imported here rather than in +page.svelte
+	// because the music overlay, the screensaver and the bedtime blank all
+	// render outside the page's markup and need the same tokens.
+	import '$lib/theme.css';
 
 	let { children } = $props();
 
