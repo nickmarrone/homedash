@@ -28,7 +28,10 @@
 
 <!-- Above the hourly strip rather than inside it: these are dated events, not
      a per-hour series, and threading them into a 12-column grid would either
-     misplace them or force the strip's column geometry to bend around them. -->
+     misplace them or force the strip's column geometry to bend around them.
+
+     Rendered into Almanac's row rather than a row of its own - see the styles
+     for why the wrapper is display: contents. -->
 {#if shown.length}
 	<div class="sky">
 		{#each shown as event (event.kind + event.date + event.name)}
@@ -57,41 +60,39 @@
 {/if}
 
 <style>
+	/* No box of its own: the wrapper exists only to hold the {#if}, and the
+	   events belong to the almanac's flex row so that they share its gaps
+	   instead of forming a second, differently-spaced group inside it. */
 	.sky {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem 1.25rem;
-		margin-top: 1.25rem;
-		font-size: 0.85rem;
-		opacity: 0.75;
+		display: contents;
 	}
 
 	.event {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: 0.35rem;
 		white-space: nowrap;
 	}
 
-	/* Something happening tonight earns full weight - the whole point of the
-	   strip is that somebody looks up before it is over. */
+	/* Something happening tonight earns full ink - the whole point of the strip
+	   is that somebody looks up before it is over. */
 	.soon,
 	.comet {
-		opacity: 1;
+		color: var(--ink);
 		font-weight: 600;
+	}
+
+	.when {
+		color: var(--ink-muted);
+	}
+
+	.detail {
+		color: var(--ink-muted);
 	}
 
 	/* A comet is rare enough that its detail is the headline, not an aside. */
 	.comet .detail {
-		opacity: 0.85;
-	}
-
-	.when {
-		opacity: 0.75;
-	}
-
-	.detail {
-		opacity: 0.6;
+		color: var(--ink-soft);
 	}
 
 	/* Portrait is 1080px wide, so three events with their details do not fit on

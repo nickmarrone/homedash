@@ -35,13 +35,14 @@
 	aria-label="{moon.phase}, {Math.round(moon.illumination * 100)}% illuminated"
 >
 	<!-- The unlit disc, so a crescent still reads as a whole moon rather than a
-	     detached sliver. Low-alpha grey for the same reason the rest of the app
-	     uses it: it holds up in both light and dark without a palette. -->
-	<circle r={R} fill="rgba(128, 128, 128, 0.25)" />
+	     detached sliver. It is the paper's own wash rather than a transparent
+	     grey: this glyph sits on the almanac line and inside the sky strip, and
+	     an alpha fill would pick up whatever is behind it in each. -->
+	<circle r={R} fill="var(--wash)" />
 	<g transform={litOnRight ? undefined : 'scale(-1, 1)'}>
 		<path d={lit} fill="currentColor" />
 	</g>
-	<circle r={R} fill="none" stroke="currentColor" stroke-width="0.75" opacity="0.35" />
+	<circle r={R} fill="none" stroke="var(--rule-strong)" stroke-width="0.75" />
 </svg>
 
 <style>

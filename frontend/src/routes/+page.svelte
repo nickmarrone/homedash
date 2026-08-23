@@ -28,14 +28,15 @@
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
 	import { loadPlayerId, pickPlayer, savePlayerId } from '$lib/musicPreference';
+	import { formatMasthead } from '$lib/format';
 	import AgendaList from '$lib/components/AgendaList.svelte';
+	import Almanac from '$lib/components/Almanac.svelte';
 	import CalendarLegend from '$lib/components/CalendarLegend.svelte';
 	import DayWeekView from '$lib/components/DayWeekView.svelte';
 	import HourlyForecast from '$lib/components/HourlyForecast.svelte';
 	import MonthGrid from '$lib/components/MonthGrid.svelte';
 	import MusicOverlay from '$lib/components/MusicOverlay.svelte';
 	import NowPlayingBar from '$lib/components/NowPlayingBar.svelte';
-	import SkyEvents from '$lib/components/SkyEvents.svelte';
 	import PeriodNav from '$lib/components/PeriodNav.svelte';
 	import PanelBlank from '$lib/components/PanelBlank.svelte';
 	import Screensaver from '$lib/components/Screensaver.svelte';
@@ -106,6 +107,11 @@
 	let musicBarOn = $derived(
 		activePlayer !== null && (activePlayer.state === 'play' || activePlayer.state === 'pause')
 	);
+
+	// Null until the server has told us what day it is. The heartbeat updates
+	// serverToday at midnight, so the masthead rolls over on its own without
+	// the panel ever reading its own clock.
+	let masthead = $derived(serverToday ? formatMasthead(serverToday) : null);
 
 	let visibleItems = $derived(items.filter((item) => isVisible(item, hiddenCalendars)));
 
@@ -331,15 +337,22 @@
 </svelte:head>
 
 <main>
+	<!-- The masthead states today's date, which the panel did nowhere at all
+	     before: the product name was in the one place a family calendar has no
+	     use for it. Empty until the first heartbeat or grid response lands,
+	     because the date shown here is the server's - the panel's own clock is
+	     not trusted anywhere in this app. -->
 	<header>
-		<h1>HomeDash</h1>
+		<div class="masthead">
+			{#if masthead}
+				<span class="caps">{masthead.weekday}</span>
+				<h1>{masthead.date}</h1>
+			{/if}
+		</div>
 		<WeatherWidget {weather} />
 	</header>
-	<SkyEvents
-		events={weather?.astro?.events ?? []}
-		today={serverToday}
-		moon={weather?.astro?.moon ?? null}
-	/>
+	<div class="masthead-rule"></div>
+	<Almanac {weather} today={serverToday} />
 	<HourlyForecast {weather} />
 	<div class="controls">
 		<CalendarLegend {calendars} hidden={hiddenCalendars} onToggle={toggleCalendar} />
@@ -367,7 +380,7 @@
 		{/if}
 		{#if isPortrait}
 			<section class="upcoming">
-				<h2>Coming up</h2>
+				<h2 class="caps">Coming up</h2>
 				<AgendaList items={visibleItems} today={serverToday} now={serverNow} />
 			</section>
 		{/if}
@@ -436,44 +449,57 @@
 {/if}
 
 <style>
-	:global(html) {
-		color-scheme: light dark;
-	}
-
-	:global(body) {
-		margin: 0;
-		font-family:
-			system-ui,
-			-apple-system,
-			'Segoe UI',
-			sans-serif;
-	}
-
 	main {
 		/* Deliberately full width: a month grid needs the whole panel. The
 		   narrow column this used to have was an agenda-only choice. */
 		margin: 0 auto;
-		padding: 1.5rem 1.5rem 3rem;
+		padding: 2rem 2.25rem 2.25rem;
 	}
 
 	header {
 		display: flex;
-		align-items: flex-start;
+		align-items: flex-end;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 1.75rem;
+	}
+
+	.masthead {
+		min-width: 0;
 	}
 
 	h1 {
-		font-size: 1.5rem;
-		margin: 0;
+		margin: 0.25rem 0 0;
+		font-family: var(--font-display);
+		font-size: 3.5rem;
+		font-weight: 500;
+		line-height: 1.02;
+		letter-spacing: -0.015em;
+	}
+
+	/* Two rules, thick over thin. One line would read as a border; the pair
+	   reads as the rule under a masthead, which is the whole point of the
+	   direction - this is a printed page, not a dashboard. */
+	.masthead-rule {
+		margin-top: 0.875rem;
+		border-top: 2px solid var(--ink);
+	}
+
+	.masthead-rule::after {
+		content: '';
+		display: block;
+		margin-top: 3px;
+		border-top: 1px solid var(--rule);
 	}
 
 	.controls {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 1rem;
-		margin-top: 1rem;
+		gap: 0 1.25rem;
+		margin-top: 1.5rem;
+		/* The controls row is a rule the selected view underlines through, so
+		   the switcher's own 2px mark has something to sit on. */
+		border-bottom: 1px solid var(--rule);
 	}
 
 	.switcher-slot {
@@ -487,9 +513,12 @@
 		position: sticky;
 		bottom: 0;
 		z-index: 20;
-		padding-top: 0.75rem;
-		margin-top: 1rem;
-		background: Canvas;
+		padding-top: 1rem;
+		margin-top: 1.5rem;
+		/* Opaque, or the calendar scrolls through the bar. It is the page's own
+		   ground rather than a panel of its own: the strip is separated by its
+		   rule, not by a change of surface. */
+		background: var(--paper);
 	}
 
 	/* Nothing playing: a button, not a bar, so an idle panel gives the
@@ -503,12 +532,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		min-height: 48px;
-		padding: 0 1.1rem;
-		border: none;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
-		color: inherit;
+		min-height: var(--tap);
+		padding: 0 1.25rem;
+		border: 1px solid var(--rule-strong);
+		border-radius: var(--radius-pill);
+		background: transparent;
+		color: var(--ink-soft);
 		font: inherit;
 		cursor: pointer;
 		touch-action: manipulation;
@@ -525,17 +554,13 @@
 	}
 
 	.upcoming {
-		margin-top: 1.5rem;
-		border-top: 1px solid rgba(128, 128, 128, 0.3);
-		padding-top: 0.5rem;
+		margin-top: 1.75rem;
+		border-top: 1px solid var(--rule);
+		padding-top: 0.75rem;
 	}
 
 	.upcoming h2 {
-		font-size: 1rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		opacity: 0.6;
-		margin: 0.5rem 0 0;
+		margin: 0;
 	}
 
 	/* Portrait is 1080px wide on the wall panel, so the header's two halves no
@@ -543,13 +568,19 @@
 	   calendar needs. */
 	@media (orientation: portrait) {
 		main {
-			padding: 1rem 0.75rem 2rem;
+			padding: 1.5rem 1.5rem 1.75rem;
 		}
 
+		/* The header's two halves stay on one line here, which they could not
+		   before: the date replaced a product name that was longer than it, and
+		   the temperature lost the four detail rows that used to stack under
+		   it. Stacking them would push the calendar down for nothing. */
 		header {
-			flex-direction: column;
-			align-items: stretch;
-			gap: 0.5rem;
+			gap: 1.25rem;
+		}
+
+		h1 {
+			font-size: 3rem;
 		}
 	}
 </style>

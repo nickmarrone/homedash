@@ -126,3 +126,29 @@ export function formatHour(iso: string): string {
 	const suffix = hours >= 12 ? 'PM' : 'AM';
 	return `${hours % 12 || 12} ${suffix}`;
 }
+
+/**
+ * The masthead's two lines: `{ weekday: "Sunday", date: "23 August 2026" }`.
+ *
+ * Written out in full - weekday, day, month, year - because the masthead is
+ * read as a sentence rather than scanned in a table, and because until now the
+ * panel stated today's date nowhere at all. Component order follows the
+ * panel's locale, the same as every other formatter here.
+ *
+ * `Date` here only ever does calendar arithmetic on date components, in UTC,
+ * and never reads the clock: the date it is formatting is the server's, which
+ * is the only one this app trusts.
+ */
+export function formatMasthead(date: string): { weekday: string; date: string } {
+	const [year, month, day] = date.split('-').map(Number);
+	const value = new Date(Date.UTC(year, month - 1, day));
+	return {
+		weekday: value.toLocaleDateString(undefined, { timeZone: 'UTC', weekday: 'long' }),
+		date: value.toLocaleDateString(undefined, {
+			timeZone: 'UTC',
+			day: 'numeric',
+			month: 'long',
+			year: 'numeric'
+		})
+	};
+}

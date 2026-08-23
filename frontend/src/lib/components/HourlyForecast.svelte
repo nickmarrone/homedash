@@ -81,7 +81,7 @@
 
 <style>
 	.hourly {
-		margin-top: 1.5rem;
+		margin-top: 1.35rem;
 	}
 
 	/* Equal columns that line up with the SVG's column-unit viewBox above.
@@ -98,41 +98,44 @@
 	}
 
 	.temps {
-		font-size: 1rem;
+		font-size: 1.0625rem;
 		font-weight: 600;
-		margin-bottom: 0.25rem;
+		color: var(--ink-soft);
+		margin-bottom: 0.35rem;
 	}
 
 	.bars {
 		display: block;
 		width: 100%;
-		height: 2.5rem;
+		height: 2.75rem;
 	}
 
-	/* No color tokens in this app - it themes purely via color-scheme, so the
-	   bar borrows the inherited text color and the track is the same low-alpha
-	   grey the legend chips use. Both stay legible in light and dark, and
-	   neither can be mistaken for a calendar accent from the source palette. */
+	/* Rain is the one quantity on this panel that is neither text nor an
+	   appointment, so it gets the only colour in the palette that is neither -
+	   see --rain in theme.css. The track is the paper's wash, which is what the
+	   direction uses wherever a filled block is unavoidable. */
 	.track {
-		fill: rgba(128, 128, 128, 0.14);
+		fill: var(--wash);
 	}
 
 	.fill {
-		fill: currentColor;
-		opacity: 0.35;
+		fill: var(--rain);
 	}
 
 	.rain {
-		font-size: 0.8rem;
-		opacity: 0.7;
+		font-size: 0.8125rem;
+		color: var(--ink-muted);
 		/* Reserved even when every hour is dry, so the strip does not change
 		   height between refreshes. */
 		min-height: 1.1rem;
-		margin-top: 0.2rem;
+		margin-top: 0.25rem;
 	}
 
 	.labels {
-		font-size: 0.8rem;
-		opacity: 0.7;
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--ink-muted);
 	}
 </style>

@@ -1,8 +1,6 @@
 <script lang="ts">
 	import type { Weather } from '$lib/api';
-	import { formatTime } from '$lib/format';
 	import { weatherDescription } from '$lib/weatherCodes';
-	import MoonGlyph from './MoonGlyph.svelte';
 
 	let { weather }: { weather: Weather | null } = $props();
 
@@ -10,90 +8,47 @@
 	// Open-Meteo returns "°F"/"°C" in *_units; strip the degree sign so the
 	// markup keeps its own and we render "72°F" rather than "72°°F".
 	let unit = $derived((weather?.current_units?.temperature_2m ?? '').replace('°', ''));
-	let moon = $derived(weather?.astro?.moon);
-	let today = $derived.by(() => {
-		const daily = weather?.daily;
-		if (!daily?.time?.length) return null;
-		return {
-			high: daily.temperature_2m_max?.[0],
-			low: daily.temperature_2m_min?.[0],
-			sunrise: daily.sunrise?.[0],
-			sunset: daily.sunset?.[0]
-		};
-	});
 </script>
 
+<!-- The right half of the masthead, and nothing else. Everything that used to
+     stack underneath this - the day's range, the sun times, the AQI, the moon -
+     moved into Almanac, which lays them along one line instead of down the
+     right edge. -->
 <div class="weather">
 	{#if !current}
 		<p class="empty">Weather unavailable.</p>
 	{:else}
-		<div class="now">
-			<span class="temp">{Math.round(current.temperature_2m ?? 0)}°{unit}</span>
-			<span class="desc">{weatherDescription(current.weather_code)}</span>
-		</div>
-		{#if today}
-			<div class="details">
-				<span>H {Math.round(today.high ?? 0)}° / L {Math.round(today.low ?? 0)}°</span>
-				{#if today.sunrise && today.sunset}
-					<span>☀ {formatTime(today.sunrise)} – {formatTime(today.sunset)}</span>
-				{/if}
-			</div>
-		{/if}
+		<span class="temp">{Math.round(current.temperature_2m ?? 0)}°{unit}</span>
+		<span class="caps desc">{weatherDescription(current.weather_code)}</span>
 	{/if}
-	<!-- Outside the weather branch on purpose: the moon is computed from the
-	     configured coordinates, so it is still known when Open-Meteo is not
-	     answering. A panel that loses the sky as well as the forecast makes an
-	     outage look worse than it is. -->
-	<div class="details">
-		{#if weather?.air_quality?.us_aqi !== undefined}
-			<span>AQI {Math.round(weather.air_quality.us_aqi)}</span>
-		{/if}
-		{#if moon}
-			<span class="moon">
-				<MoonGlyph {moon} />
-				{moon.phase}
-			</span>
-		{/if}
-	</div>
 </div>
 
 <style>
 	.weather {
 		text-align: right;
+		flex: none;
 	}
 
 	.empty {
-		opacity: 0.6;
+		margin: 0;
+		color: var(--ink-muted);
 	}
 
-	.now {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		justify-content: flex-end;
-	}
-
+	/* The one number on the panel readable from the doorway. Newsreader at a
+	   regular weight rather than a bold sans: at this size the letterforms are
+	   doing the work and extra weight only makes it heavier than the date it
+	   sits beside. */
 	.temp {
-		font-size: 2.5rem;
-		font-weight: 700;
+		display: block;
+		font-family: var(--font-display);
+		font-size: 4.25rem;
+		font-weight: 400;
+		line-height: 0.98;
+		letter-spacing: -0.015em;
 	}
 
 	.desc {
-		opacity: 0.8;
-	}
-
-	.details {
-		display: flex;
-		gap: 1rem;
-		justify-content: flex-end;
-		opacity: 0.7;
-		font-size: 0.9rem;
-		margin-top: 0.25rem;
-	}
-
-	.moon {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
+		display: block;
+		margin-top: 0.3rem;
 	}
 </style>
