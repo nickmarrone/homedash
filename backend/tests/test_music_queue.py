@@ -15,10 +15,10 @@ from app.music.base import Track
 from app.music.queue import QueueManager
 
 
-def album(count=3):
+def album(count=3, prefix="t"):
     return [
         Track(
-            id=f"t{i}",
+            id=f"{prefix}{i}",
             title=f"Track {i}",
             artist="Artist",
             album="Album",
@@ -108,6 +108,21 @@ def test_pausing_does_not_advance_the_queue():
     assert played == [(1, "http://h/t1")]
 
 
+def test_only_a_play_counts_as_the_track_having_started():
+    """`awaiting_start` is cleared by `play` and by nothing else.
+
+    A speaker reports `pause` and `unknown` too, and neither says the track we
+    sent is the one it is on. Treating them as "started" would let the very
+    next `stop` - which may still be the tail of the previous stream - advance
+    the album a track early.
+    """
+    manager, played = build()
+    run(manager.start(1, album()))
+    run(manager.on_state(1, "pause"))
+    run(manager.on_state(1, "stop"))
+    assert played == [(1, "http://h/t1")]
+
+
 def test_a_cleared_queue_does_not_start_the_next_track():
     """Somebody pressing stop and a track ending look identical to the speaker.
     Clearing the queue first is what separates them, and without it stopping
@@ -189,3 +204,142 @@ def test_the_snapshot_reports_position_within_the_album():
         "track": {"id": "t1", "title": "Track 1"},
     }
     assert manager.snapshot(2) is None
+
+
+# -- concurrency -----------------------------------------------------------
+#
+# pyheos dispatches every pushed event as its own task, so a track ending and a
+# finger on the panel genuinely do run at the same time. These are the tests
+# for that; they are the reason `QueueManager` holds a per-speaker lock across
+# the command it sends, and they all fail without it.
+
+
+def gated():
+    """A manager whose `play_url` can be held open for a chosen URL.
+
+    The URL is recorded when the call *completes*, not when it starts, because
+    what matters is the order the commands reach the speaker rather than the
+    order they were issued in.
+    """
+    played: list[tuple[int, str]] = []
+    holds: dict[str, asyncio.Event] = {}
+
+    async def play_url(player_id, url):
+        hold = holds.pop(url, None)
+        if hold is not None:
+            await hold.wait()
+        played.append((player_id, url))
+
+    manager = QueueManager(play_url=play_url, url_for=lambda t: f"http://h/{t.id}")
+    return manager, played, holds
+
+
+def test_a_new_album_is_not_overtaken_by_the_track_the_old_one_was_starting():
+    """The out-of-order bug, in one test.
+
+    A track ends and the queue sends the next one; before that command lands,
+    somebody picks a different album. Unserialized, both commands are in flight
+    at once and the speaker plays whichever arrives last - which is heard as a
+    freshly chosen album starting on the previous album's next song.
+    """
+
+    async def main():
+        manager, played, holds = gated()
+        gate = asyncio.Event()
+        holds["http://h/a2"] = gate
+
+        await manager.start(1, album(3, prefix="a"))
+        await manager.on_state(1, "play")
+
+        ending = asyncio.create_task(manager.on_state(1, "stop"))
+        await asyncio.sleep(0)
+        picked = asyncio.create_task(manager.start(1, album(3, prefix="b")))
+        await asyncio.sleep(0)
+
+        gate.set()
+        await asyncio.gather(ending, picked)
+        return manager, played
+
+    manager, played = run(main())
+    assert played == [(1, "http://h/a1"), (1, "http://h/a2"), (1, "http://h/b1")]
+    assert manager.snapshot(1)["track"] == {"id": "b1", "title": "Track 1"}
+
+
+def test_an_event_about_the_old_album_cannot_advance_the_new_one():
+    """The other half: the event arrives first and is applied second.
+
+    A `stop` from the album being replaced must act on the queue that exists
+    when its turn comes, not the one that existed when it was dispatched -
+    otherwise picking a new album lands on its second track.
+    """
+
+    async def main():
+        manager, played, holds = gated()
+        gate = asyncio.Event()
+        holds["http://h/b1"] = gate
+
+        await manager.start(1, album(3, prefix="a"))
+        await manager.on_state(1, "play")
+
+        picked = asyncio.create_task(manager.start(1, album(3, prefix="b")))
+        await asyncio.sleep(0)  # holds the lock, blocked sending b1
+        stale = asyncio.create_task(manager.on_state(1, "stop"))
+        await asyncio.sleep(0)
+
+        gate.set()
+        await asyncio.gather(picked, stale)
+        return manager, played
+
+    manager, played = run(main())
+    assert played == [(1, "http://h/a1"), (1, "http://h/b1")]
+    assert manager.snapshot(1)["track"] == {"id": "b1", "title": "Track 1"}
+
+
+def test_stopping_waits_for_a_track_change_already_on_its_way():
+    """`stop` is the serialized `clear`.
+
+    Dropping the queue while the next track's command was still in flight
+    would stop the music and then let that command start it again.
+    """
+
+    async def main():
+        manager, played, holds = gated()
+        gate = asyncio.Event()
+        holds["http://h/t2"] = gate
+
+        await manager.start(1, album(3))
+        await manager.on_state(1, "play")
+
+        ending = asyncio.create_task(manager.on_state(1, "stop"))
+        await asyncio.sleep(0)
+        stopping = asyncio.create_task(manager.stop(1))
+        await asyncio.sleep(0)
+        assert manager.has(1) is True  # not cleared until the send finishes
+
+        gate.set()
+        await asyncio.gather(ending, stopping)
+        return manager, played
+
+    manager, played = run(main())
+    assert played == [(1, "http://h/t1"), (1, "http://h/t2")]
+    assert manager.has(1) is False
+
+
+def test_two_speakers_do_not_wait_on_each_other():
+    """One stalled command must not hold up the album in the next room."""
+
+    async def main():
+        manager, played, holds = gated()
+        gate = asyncio.Event()
+        holds["http://h/a1"] = gate
+
+        stalled = asyncio.create_task(manager.start(1, album(2, prefix="a")))
+        await asyncio.sleep(0)
+        await manager.start(2, album(2, prefix="b"))
+        assert played == [(2, "http://h/b1")]
+
+        gate.set()
+        await stalled
+        return played
+
+    assert run(main()) == [(2, "http://h/b1"), (1, "http://h/a1")]

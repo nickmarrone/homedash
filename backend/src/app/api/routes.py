@@ -469,7 +469,9 @@ async def post_music_transport(player_id: int, body: dict = Body(default={})) ->
             # track and a deliberate stop identically, so the queue has to be
             # gone before the resulting `stop` event arrives or it would
             # helpfully start the next track on somebody who asked for silence.
-            queues.clear(player_id)
+            # `stop` rather than `clear` so that a track change already on its
+            # way to the speaker finishes first - see app/music/queue.py.
+            await queues.stop(player_id)
         await controller.transport(player_id, action)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
@@ -526,7 +528,10 @@ def get_music_library(
     library = _library_or_503()
     try:
         if kind == "artists":
-            items = [{"id": a.id, "name": a.name} for a in library.artists()]
+            items = [
+                {"id": a.id, "name": a.name, "sort_name": a.sort_name or a.name}
+                for a in library.artists()
+            ]
         elif kind == "albums":
             items = [
                 {"id": a.id, "name": a.name, "artist": a.artist, "year": a.year}

@@ -215,10 +215,26 @@ browses natively — a real queue, at the cost of mapping two id spaces.
 **Telling three identical `stop` events apart** is where the queue's actual
 logic lives. A speaker reports `stop` between two tracks, at the end of one, and
 when somebody presses stop. `awaiting_start` distinguishes the first (set when a
-track is sent, cleared on the first non-stop state), and `clear()` on an explicit
-stop distinguishes the third. Getting the first wrong consumes an entire album in
-a fraction of a second with only the last track audible; getting the third wrong
-restarts music on somebody who just asked for silence.
+track is sent, cleared only when the speaker reports `play` — a `pause` or an
+`unknown` says nothing about whether the track we sent is the one it is on), and
+clearing the queue on an explicit stop distinguishes the third. Getting the first
+wrong consumes an entire album in a fraction of a second with only the last track
+audible; getting the third wrong restarts music on somebody who just asked for
+silence.
+
+**Everything touching one speaker's queue is serialized behind a per-speaker
+lock,** held across the command sent to the speaker rather than just the state
+change. pyheos dispatches every pushed event as its own task, so a track ending
+and a finger on a new album genuinely run at the same time: the ending track
+sends its successor, the new album sends its first track, and whichever command
+wins the race inside pyheos is what plays. Heard on the wall, that is an album
+starting on the previous album's next song. The lock also restores the ordering
+of the events themselves — `asyncio.Lock` is FIFO, so a `stop` and the `play`
+that followed it can no longer be applied backwards — and it is why the transport
+route calls `QueueManager.stop()` rather than `clear()`: dropping the queue while
+the next track is still on its way would stop the music and let that command
+start it again. The locks are per speaker so one stalled command cannot hold up
+the album playing in the next room.
 
 **Skips go through the queue, not through HEOS.** Content sent as a URL never
 enters the speaker's own queue, so `play_next` has nothing to move to and does

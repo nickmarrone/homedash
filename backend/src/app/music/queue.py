@@ -16,8 +16,15 @@ the cost of mapping two id spaces.
 State lives in this process, like the weather cache and the token store. A
 restart therefore stops the music after the current track. Acceptable for a
 wall panel, but it should be stated rather than discovered.
+
+**Everything that touches one speaker's queue is serialized** - see `_lock`.
+That is not defensive tidiness: pyheos dispatches every pushed event as its own
+task, so a track ending and a finger on a new album genuinely do run at the
+same time, and the two `play_url` commands they each send can reach the speaker
+in the order they were not issued in.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -31,9 +38,9 @@ class PlayerQueue:
     tracks: list[Track]
     index: int = 0
     # True from the moment a track is sent until the speaker reports it is
-    # doing anything other than stopped. See `on_state` - without it, the
-    # speaker's own brief stop between streams reads as "track finished" and
-    # the queue races through the whole album in a fraction of a second.
+    # playing. See `on_state` - without it, the speaker's own brief stop
+    # between streams reads as "track finished" and the queue races through
+    # the whole album in a fraction of a second.
     awaiting_start: bool = True
 
     @property
@@ -59,6 +66,31 @@ class QueueManager:
     play_url: object
     url_for: object
     queues: dict[int, PlayerQueue] = field(default_factory=dict)
+    # One lock per speaker, created on demand. Two speakers must never wait on
+    # each other: a stalled command to one would otherwise hold up the album
+    # playing in the next room.
+    locks: dict[int, asyncio.Lock] = field(default_factory=dict, repr=False)
+
+    def _lock(self, player_id: int) -> asyncio.Lock:
+        """The serialization point for one speaker.
+
+        Held across the whole of a queue change *including the command sent to
+        the speaker*, which is the part that matters. Picking a second album
+        while a track is ending otherwise runs both at once: the ending track
+        advances its queue and sends track N+1, the new album replaces the
+        queue and sends its own track 1, and whichever command wins the race
+        inside pyheos is what actually plays. That is heard as an album
+        starting on someone else's song.
+
+        `asyncio.Lock` hands the lock out in the order it was asked for, so
+        this also restores the ordering of the pushed events themselves -
+        pyheos runs each one as its own task, and without a queue in front of
+        them a `stop` and the `play` that followed it can be applied backwards.
+        """
+        lock = self.locks.get(player_id)
+        if lock is None:
+            lock = self.locks[player_id] = asyncio.Lock()
+        return lock
 
     def has(self, player_id: int) -> bool:
         return player_id in self.queues
@@ -77,10 +109,17 @@ class QueueManager:
         }
 
     async def start(self, player_id: int, tracks: list[Track]) -> None:
+        """Replace whatever this speaker was doing with a new queue.
+
+        Replace, not append: picking an album on the panel means "play this
+        now and forget the rest", which is what every other music player does
+        with a tapped album.
+        """
         if not tracks:
             raise ValueError("cannot start an empty queue")
-        self.queues[player_id] = PlayerQueue(tracks=list(tracks))
-        await self._play_current(player_id)
+        async with self._lock(player_id):
+            self.queues[player_id] = PlayerQueue(tracks=list(tracks))
+            await self._play_current(player_id)
 
     def clear(self, player_id: int) -> None:
         """Forget the queue for one speaker.
@@ -89,8 +128,23 @@ class QueueManager:
         "this track ended" from "somebody stopped the music" - the speaker
         reports both as `stop`, and without this the queue would helpfully
         start the next track on somebody who had just asked for silence.
+
+        Synchronous, and therefore *not* serialized: it is safe to call while
+        holding the lock, which the queue's own paths do. A caller outside
+        this class wants `stop`.
         """
         self.queues.pop(player_id, None)
+
+    async def stop(self, player_id: int) -> None:
+        """Forget the queue, once any track change already in flight is done.
+
+        The serialized form of `clear`, and the one the transport route uses.
+        Clearing without the lock would drop the queue while the previous
+        track's successor was still on its way to the speaker, so the music
+        would stop and then start again on a track nobody asked for.
+        """
+        async with self._lock(player_id):
+            self.clear(player_id)
 
     async def next(self, player_id: int) -> bool:
         """Skip forward. Returns False when this speaker has no HomeDash queue.
@@ -99,25 +153,28 @@ class QueueManager:
         `play_next`: content sent as a URL never enters the speaker's queue, so
         its next-track command has nothing to move to and does nothing at all.
         """
-        queue = self.queues.get(player_id)
-        if queue is None:
-            return False
-        if queue.remaining == 0:
-            self.clear(player_id)
+        async with self._lock(player_id):
+            queue = self.queues.get(player_id)
+            if queue is None:
+                return False
+            if queue.remaining == 0:
+                self.clear(player_id)
+                return True
+            queue.index += 1
+            await self._play_current(player_id)
             return True
-        queue.index += 1
-        await self._play_current(player_id)
-        return True
 
     async def previous(self, player_id: int) -> bool:
-        queue = self.queues.get(player_id)
-        if queue is None:
-            return False
-        # Restarts the current track when there is nothing before it, which is
-        # what every music player does and what a finger on a wall expects.
-        queue.index = max(0, queue.index - 1)
-        await self._play_current(player_id)
-        return True
+        async with self._lock(player_id):
+            queue = self.queues.get(player_id)
+            if queue is None:
+                return False
+            # Restarts the current track when there is nothing before it, which
+            # is what every music player does and what a finger on a wall
+            # expects.
+            queue.index = max(0, queue.index - 1)
+            await self._play_current(player_id)
+            return True
 
     async def on_state(self, player_id: int, state: str) -> None:
         """React to what the speaker says it is doing.
@@ -125,30 +182,42 @@ class QueueManager:
         The only signal available for "the track finished" is the speaker going
         to `stop`, so the gap between two tracks has to be told apart from the
         end of one. `awaiting_start` is what does it: it is set when a track is
-        sent and cleared as soon as the speaker reports anything else, so the
-        stop that arrives before playback begins is ignored and the one that
-        arrives after it is not.
+        sent and cleared once the speaker reports it is *playing*, so the stop
+        that arrives before playback begins is ignored and the one that arrives
+        after it is not.
 
         A track that never starts therefore stalls the queue rather than
         advancing it. That is the right way round: a stall is one silent
         speaker, while the alternative races through an entire album in the
         time it takes to notice.
+
+        The queue is read after the lock, never before. An event about the
+        album that was playing a moment ago can be waiting here while somebody
+        picks a new one, and it must act on the queue that exists when its turn
+        comes rather than the one that did when it arrived.
         """
-        queue = self.queues.get(player_id)
-        if queue is None:
-            return
-        if state != "stop":
-            queue.awaiting_start = False
-            return
-        if queue.awaiting_start:
-            return
-        if queue.remaining == 0:
-            self.clear(player_id)
-            return
-        queue.index += 1
-        await self._play_current(player_id)
+        async with self._lock(player_id):
+            queue = self.queues.get(player_id)
+            if queue is None:
+                return
+            if state == "play":
+                queue.awaiting_start = False
+                return
+            # Only `play` counts as having started. A `pause` or an `unknown`
+            # arriving before the stream opens says nothing about whether the
+            # track we sent is the one the speaker is on.
+            if state != "stop":
+                return
+            if queue.awaiting_start:
+                return
+            if queue.remaining == 0:
+                self.clear(player_id)
+                return
+            queue.index += 1
+            await self._play_current(player_id)
 
     async def _play_current(self, player_id: int) -> None:
+        """Send the queue's current track. Always called with the lock held."""
         queue = self.queues[player_id]
         track = queue.current
         if track is None:
