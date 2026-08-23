@@ -66,38 +66,44 @@
 	.transport {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.6rem;
 	}
 
+	/* Outlined, not filled - the same treatment the period arrows get, so every
+	   circular control on the panel looks like the same kind of thing. */
 	button {
 		display: grid;
 		place-items: center;
 		/* 48px, as everywhere: the smallest target that stays reliable for a
 		   fingertip on a wall panel, where you are reaching rather than aiming. */
-		min-width: 48px;
-		min-height: 48px;
+		min-width: var(--tap);
+		min-height: var(--tap);
 		padding: 0;
-		border: none;
-		border-radius: 999px;
+		border: 1px solid var(--rule-strong);
+		border-radius: var(--radius-pill);
 		background: transparent;
-		color: inherit;
+		color: var(--ink-soft);
 		cursor: pointer;
 		touch-action: manipulation;
 		-webkit-tap-highlight-color: transparent;
 	}
 
+	/* Play/pause is the one control anybody reaches for without looking, so it
+	   is the one solid shape in the group. */
 	.primary {
-		background: rgba(128, 128, 128, 0.18);
+		border-color: var(--ink);
+		background: var(--ink);
+		color: var(--paper);
 	}
 
 	svg {
-		width: 26px;
-		height: 26px;
+		width: 24px;
+		height: 24px;
 	}
 
 	.compact svg {
-		width: 22px;
-		height: 22px;
+		width: 20px;
+		height: 20px;
 	}
 
 	button:active {
@@ -105,7 +111,7 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 </style>

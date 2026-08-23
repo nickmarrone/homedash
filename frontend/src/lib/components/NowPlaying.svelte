@@ -35,6 +35,8 @@
 </script>
 
 <div class="now-playing">
+	<!-- Matted like a print: the cover sits on a white border inside a hairline
+	     frame, which is also what stops a dark sleeve bleeding into the paper. -->
 	<div class="art">
 		{#if art}
 			<img src={art} alt="" onerror={() => (failedArt = art)} />
@@ -65,13 +67,21 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 1.25rem;
+		gap: 1.75rem;
 		text-align: center;
 	}
 
+	/* Raised from the component's old min(48vh, 420px). On a 1920-tall portrait
+	   panel that cap left the cover small from across a kitchen, which is the
+	   distance this screen is actually read from. */
 	.art {
-		width: min(48vh, 420px);
+		width: min(46vh, 560px);
 		aspect-ratio: 1;
+		padding: 7px;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
+		background: var(--paper-raised);
+		box-sizing: border-box;
 	}
 
 	img,
@@ -79,60 +89,68 @@
 		display: block;
 		width: 100%;
 		height: 100%;
-		border-radius: 14px;
 		object-fit: cover;
-		background: rgba(128, 128, 128, 0.2);
+		background: var(--wash);
 	}
 
 	.meta {
-		width: min(90vw, 520px);
+		width: min(84vw, 520px);
 	}
 
 	p {
-		margin: 0 0 0.2rem;
+		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.title {
-		font-size: 1.7rem;
-		font-weight: 600;
+		font-family: var(--font-display);
+		font-size: 2.5rem;
+		font-weight: 500;
+		line-height: 1.06;
+		letter-spacing: -0.015em;
 	}
 
 	.artist {
-		font-size: 1.15rem;
-		opacity: 0.85;
+		margin-top: 0.4rem;
+		font-size: 1.25rem;
+		color: var(--ink-soft);
 	}
 
 	.album {
-		font-size: 1rem;
-		opacity: 0.6;
+		margin-top: 0.15rem;
+		font-family: var(--font-display);
+		font-style: italic;
+		font-size: 1.0625rem;
+		color: var(--ink-muted);
 	}
 
 	.progress {
-		margin-top: 1rem;
+		margin-top: 1.6rem;
 	}
 
+	/* A hairline rather than a thick rounded track, and that is not only taste:
+	   the once-a-second HEOS progress tick is filtered out on the server so the
+	   panel is not woken 3600 times an hour, which means this steps rather than
+	   sweeps. A hairline reads as a measurement; a fat capsule promises smooth
+	   motion the input cannot deliver. */
 	.track {
-		height: 6px;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.25);
+		height: 4px;
+		background: var(--wash);
 		overflow: hidden;
 	}
 
 	.fill {
 		height: 100%;
-		background: currentColor;
-		opacity: 0.7;
+		background: var(--ink);
 	}
 
 	.times {
 		display: flex;
 		justify-content: space-between;
-		margin-top: 0.35rem;
-		font-size: 0.85rem;
-		opacity: 0.6;
-		font-variant-numeric: tabular-nums;
+		margin-top: 0.5rem;
+		font-size: 0.9375rem;
+		color: var(--ink-muted);
 	}
 </style>

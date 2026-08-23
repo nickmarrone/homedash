@@ -43,8 +43,11 @@
 			<span class="placeholder" aria-hidden="true"></span>
 		{/if}
 		<span class="text">
-			<span class="title">{title}</span>
-			<span class="subtitle">{subtitle}</span>
+			<span class="caps label">Now playing</span>
+			<span class="line">
+				<span class="title">{title}</span>
+				<span class="subtitle">{subtitle}</span>
+			</span>
 		</span>
 	</button>
 
@@ -52,23 +55,25 @@
 </div>
 
 <style>
+	/* A strip under a rule rather than a grey capsule. It is the last thing on
+	   a page of ruled sections, so it is separated the same way every other
+	   section is - by a line, not by a change of surface. */
 	.bar {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		padding: 0.4rem 0.75rem;
-		border-radius: 12px;
-		background: rgba(128, 128, 128, 0.12);
+		gap: 1rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--rule);
 	}
 
 	.open {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: 1rem;
 		flex: 1;
 		/* The whole strip is the target, so it comfortably clears 48px without
 		   a min-height fighting the bar's own padding. */
-		min-height: 48px;
+		min-height: var(--tap);
 		padding: 0;
 		border: none;
 		background: transparent;
@@ -84,17 +89,29 @@
 
 	img,
 	.placeholder {
-		width: 44px;
-		height: 44px;
-		border-radius: 6px;
+		width: 52px;
+		height: 52px;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
 		object-fit: cover;
-		background: rgba(128, 128, 128, 0.25);
+		background: var(--wash);
 		flex: none;
 	}
 
 	.text {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
+	}
+
+	.label {
+		font-size: 0.6875rem;
+	}
+
+	.line {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
 		min-width: 0;
 	}
 
@@ -106,12 +123,20 @@
 	}
 
 	.title {
-		font-weight: 600;
+		flex: none;
+		max-width: 60%;
+		font-family: var(--font-display);
+		font-size: 1.375rem;
+		font-weight: 500;
 	}
 
+	/* Italic and set back, so the title and what it is from read as one line
+	   the way a caption does, rather than as two competing labels. */
 	.subtitle {
-		font-size: 0.85rem;
-		opacity: 0.7;
+		font-family: var(--font-display);
+		font-style: italic;
+		font-size: 1.0625rem;
+		color: var(--ink-muted);
 	}
 
 	.open:active {
@@ -119,7 +144,7 @@
 	}
 
 	.open:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 </style>

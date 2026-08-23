@@ -35,36 +35,34 @@
 	.picker {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem;
-		padding: 0.25rem;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
 	}
 
+	/* Underlined, like the view switcher and the music tabs: one selection mark
+	   for the whole panel, so a chosen thing always looks chosen the same way. */
 	button {
-		min-height: 48px;
-		padding: 0 1rem;
+		min-height: var(--tap);
+		padding: 0 0.7rem;
 		border: none;
-		border-radius: 999px;
+		border-bottom: 2px solid transparent;
 		background: transparent;
-		color: inherit;
+		color: var(--ink-muted);
 		font: inherit;
-		font-size: 1rem;
+		font-size: 1.0625rem;
 		cursor: pointer;
 		touch-action: manipulation;
 		-webkit-tap-highlight-color: transparent;
 	}
 
 	.selected {
-		background: Canvas;
+		color: var(--ink);
 		font-weight: 600;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+		border-bottom-color: var(--ink);
 	}
 
 	/* Still selectable: a speaker often reports unavailable because it is
 	   asleep, and choosing it is how you find out whether it wakes up. */
 	.unavailable {
-		opacity: 0.45;
+		color: var(--ink-trace);
 	}
 
 	button:active {
@@ -72,7 +70,7 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 </style>

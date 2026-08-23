@@ -169,19 +169,25 @@
 		   sky or floor, and a hard-edged strip across it reads as a fault on a
 		   wall panel where the slideshow runs for months. */
 		background: linear-gradient(to top, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
-		/* Fixed colours on purpose - this sits on photographs, not on Canvas,
-		   so it does not follow the light/dark theme the rest of the app does. */
+		/* Fixed white on purpose. Every other colour on the panel comes from
+		   theme.css, but this one sits on photographs rather than on the paper
+		   ground, and it has to hold over whatever the next photo turns out to
+		   be. */
 		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 		pointer-events: none;
 	}
 
+	/* The one place the panel's palette does not apply - see the note on .track
+	   above - but its typefaces still do, so a photo caption looks like it came
+	   from the same page as everything else. */
 	.song {
-		font-size: 1.4rem;
-		font-weight: 600;
+		font-family: var(--font-display);
+		font-size: 1.75rem;
+		font-weight: 500;
 	}
 
 	.artist {
-		font-size: 1.05rem;
+		font-size: 1.15rem;
 		opacity: 0.85;
 	}
 

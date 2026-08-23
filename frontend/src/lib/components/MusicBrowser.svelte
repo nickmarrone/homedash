@@ -303,45 +303,52 @@
 	header {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		padding-bottom: 0.75rem;
+		gap: 1rem;
+		padding-bottom: 0.6rem;
+		border-bottom: 2px solid var(--ink);
 	}
 
 	h2 {
 		margin: 0;
-		font-size: 1.3rem;
+		font-family: var(--font-display);
+		font-size: 2.25rem;
+		font-weight: 500;
+		letter-spacing: -0.01em;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
+	/* Outlined, like every other round control on the panel. */
 	.back {
 		display: grid;
 		place-items: center;
-		min-width: 48px;
-		min-height: 48px;
+		min-width: var(--tap);
+		min-height: var(--tap);
 		flex: none;
-		border: none;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
-		color: inherit;
+		border: 1px solid var(--rule-strong);
+		border-radius: var(--radius-pill);
+		background: transparent;
+		color: var(--ink-soft);
 		cursor: pointer;
 	}
 
 	.back svg {
-		width: 24px;
-		height: 24px;
+		width: 22px;
+		height: 22px;
 	}
 
+	/* The one filled button in the browser, because it is the only one that
+	   starts something rather than moving around. */
 	.play-all {
 		margin-left: auto;
 		flex: none;
-		min-height: 48px;
-		padding: 0 1.1rem;
+		min-height: var(--tap);
+		padding: 0 1.3rem;
 		border: none;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.18);
-		color: inherit;
+		border-radius: var(--radius-pill);
+		background: var(--ink);
+		color: var(--paper);
 		font: inherit;
 		font-weight: 600;
 		cursor: pointer;
@@ -406,7 +413,6 @@
 		border: none;
 		background: transparent;
 		padding: 0;
-		color: inherit;
 		font: inherit;
 		font-size: 0.75rem;
 		font-weight: 600;
@@ -414,51 +420,49 @@
 		/* Letters with nothing behind them stay visible rather than being
 		   removed: a rail whose letters move as the library grows is one you
 		   have to read instead of aim at. Tapping one still lands on the next
-		   letter that does have something. */
-		opacity: 0.28;
+		   letter that does have something. Three ink steps rather than three
+		   opacities, so the letters do not pick up whatever is behind them. */
+		color: var(--ink-trace);
 		cursor: pointer;
 	}
 
 	.rail button.present {
-		opacity: 0.65;
+		color: var(--ink-muted);
 	}
 
 	.rail button.active {
-		opacity: 1;
+		color: var(--ink);
 		transform: scale(1.4);
 	}
 
 	.rows li button {
 		display: flex;
 		align-items: center;
-		gap: 0.9rem;
+		gap: 1rem;
 		width: 100%;
-		min-height: 48px;
-		padding: 0.5rem 0.75rem;
+		min-height: 56px;
+		padding: 0.4rem 0.85rem;
 		border: none;
-		border-radius: 10px;
+		border-bottom: 1px solid var(--rule-soft);
 		background: transparent;
-		color: inherit;
+		color: var(--ink);
 		font: inherit;
+		font-size: 1.25rem;
 		text-align: left;
 		cursor: pointer;
 	}
 
-	.rows li + li button {
-		border-top: 1px solid rgba(128, 128, 128, 0.18);
-		border-radius: 0;
-	}
-
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-		gap: 1rem;
+		grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+		gap: 1.25rem;
+		padding-top: 1.25rem;
 	}
 
 	.grid li button {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
+		gap: 0.4rem;
 		width: 100%;
 		padding: 0;
 		border: none;
@@ -473,15 +477,21 @@
 		width: 100%;
 		aspect-ratio: 1;
 		object-fit: cover;
-		border-radius: 10px;
-		background: rgba(128, 128, 128, 0.2);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
+		background: var(--wash);
+	}
+
+	.grid .name {
+		font-family: var(--font-display);
+		font-size: 1.0625rem;
+		font-weight: 500;
 	}
 
 	.index {
 		min-width: 2ch;
 		text-align: right;
-		opacity: 0.5;
-		font-variant-numeric: tabular-nums;
+		color: var(--ink-ghost);
 	}
 
 	.name {
@@ -492,14 +502,15 @@
 	}
 
 	.sub {
-		opacity: 0.6;
-		font-size: 0.85rem;
+		color: var(--ink-muted);
+		font-size: 0.9375rem;
 		flex: none;
 	}
 
 	.note {
-		opacity: 0.6;
-		padding: 1rem 0.75rem;
+		padding: 1.5rem 0.85rem;
+		font-style: italic;
+		color: var(--ink-ghost);
 	}
 
 	button {
@@ -512,7 +523,7 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 </style>

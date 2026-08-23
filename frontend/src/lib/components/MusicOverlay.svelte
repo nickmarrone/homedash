@@ -85,6 +85,9 @@
 				>
 			</nav>
 		{/if}
+		{#if hasLibrary && players.length > 1}
+			<span class="divider" aria-hidden="true"></span>
+		{/if}
 		<PlayerPicker {players} selectedId={player.id} onSelect={onSelectPlayer} />
 		<button class="close" type="button" onclick={onClose} aria-label="Close music">
 			<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -110,20 +113,21 @@
 		<NowPlaying {player} />
 
 		{#if player.queue}
-			<p class="queue">Track {player.queue.position} of {player.queue.length}</p>
+			<p class="caps queue">Track {player.queue.position} of {player.queue.length}</p>
 		{/if}
 
 		<div class="controls">
 			<TransportControls {player} {onAction} />
 
 			<label class="volume">
-				<span class="label">Volume</span>
+				<span class="caps label">Volume</span>
 				<input
 					type="range"
 					min="0"
 					max="100"
 					step="1"
 					value={volume}
+					style:--filled={`${volume}%`}
 					oninput={(event) => commit(Number(event.currentTarget.value))}
 					onchange={() => (dragging = null)}
 					onpointerup={() => (dragging = null)}
@@ -142,43 +146,49 @@
 		z-index: 40;
 		display: flex;
 		flex-direction: column;
-		background: Canvas;
-		color: inherit;
+		background: var(--paper);
+		color: var(--ink);
 	}
 
 	header {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
-		padding: 0.75rem 1rem;
+		gap: 1.75rem;
+		padding: 1.5rem 1.5rem 0;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.divider {
+		width: 1px;
+		height: 1.6rem;
+		background: var(--rule);
+		flex: none;
 	}
 
 	.tabs {
 		display: flex;
-		gap: 0.25rem;
-		padding: 0.25rem;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
 	}
 
+	/* Underlined, like the view switcher: opening the music does not change how
+	   a selected thing looks. */
 	.tabs button {
-		min-height: 48px;
-		padding: 0 1rem;
+		min-height: var(--tap);
+		padding: 0 0.9rem;
 		border: none;
-		border-radius: 999px;
+		border-bottom: 2px solid transparent;
 		background: transparent;
-		color: inherit;
+		color: var(--ink-muted);
 		font: inherit;
-		font-size: 1rem;
+		font-size: 1.0625rem;
 		cursor: pointer;
 		touch-action: manipulation;
 		-webkit-tap-highlight-color: transparent;
 	}
 
 	.tabs .selected {
-		background: Canvas;
+		color: var(--ink);
 		font-weight: 600;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+		border-bottom-color: var(--ink);
 	}
 
 	.tabs button:active {
@@ -188,36 +198,35 @@
 	.browse {
 		flex: 1;
 		min-height: 0;
-		padding: 0 1rem 1rem;
+		padding: 1.25rem 1.5rem 1.5rem;
 	}
 
 	.queue {
 		margin: 0;
-		font-size: 0.9rem;
-		opacity: 0.6;
+		font-size: 0.75rem;
 	}
 
 	.close {
 		display: grid;
 		place-items: center;
-		min-width: 48px;
-		min-height: 48px;
+		min-width: var(--tap);
+		min-height: var(--tap);
 		/* Pushed right on its own rather than by justify-content, so it still
 		   sits against the edge when the picker renders nothing at all - which
 		   it does for a one-speaker household. */
 		margin-left: auto;
-		border: none;
-		border-radius: 999px;
-		background: rgba(128, 128, 128, 0.14);
-		color: inherit;
+		border: 1px solid var(--rule-strong);
+		border-radius: var(--radius-pill);
+		background: transparent;
+		color: var(--ink-soft);
 		cursor: pointer;
 		touch-action: manipulation;
 		-webkit-tap-highlight-color: transparent;
 	}
 
 	.close svg {
-		width: 24px;
-		height: 24px;
+		width: 22px;
+		height: 22px;
 	}
 
 	.body {
@@ -227,7 +236,7 @@
 		align-items: center;
 		justify-content: center;
 		gap: 2rem;
-		padding: 1rem;
+		padding: 1.5rem;
 		/* A long album title must not be able to push the transport buttons
 		   off the bottom of a 1080-tall panel. */
 		overflow-y: auto;
@@ -237,34 +246,65 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 1.25rem;
+		gap: 1.5rem;
 	}
 
 	.volume {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		width: min(90vw, 420px);
+		gap: 1.1rem;
+		/* Matched to NowPlaying's own text column, so the slider, the position
+		   bar and the title all share one measure. */
+		width: min(84vw, 520px);
 	}
 
 	.label {
-		font-size: 0.85rem;
-		opacity: 0.6;
+		font-size: 0.6875rem;
 	}
 
 	.level {
-		min-width: 2.5ch;
+		min-width: 3ch;
 		text-align: right;
-		font-variant-numeric: tabular-nums;
+		font-size: 1.125rem;
 	}
 
+	/* Drawn rather than left native. accent-color alone paints the filled half
+	   and the thumb, but leaves the rest of the track the browser's own cool
+	   grey - the one cold thing on a warm page. Turning the appearance off
+	   also turns off the filled half, so it is painted here from --filled,
+	   which the markup sets from the same value the thumb sits at.
+	   Chromium-only selectors are safe: the panel is Chromium in kiosk mode,
+	   and a browser that ignores them still gets a working slider. */
 	input[type='range'] {
 		flex: 1;
 		/* The thumb is the target here, and the default one is far too small
 		   for a fingertip on a wall panel. */
-		height: 48px;
-		accent-color: currentColor;
+		height: var(--tap);
+		accent-color: var(--ink);
 		touch-action: manipulation;
+		-webkit-appearance: none;
+		appearance: none;
+		background: transparent;
+	}
+
+	input[type='range']::-webkit-slider-runnable-track {
+		height: 3px;
+		background: linear-gradient(
+			to right,
+			var(--ink) 0 var(--filled),
+			var(--wash) var(--filled) 100%
+		);
+	}
+
+	input[type='range']::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 28px;
+		height: 28px;
+		/* Half the thumb above the 3px track, so it sits centred on the line. */
+		margin-top: -12.5px;
+		border-radius: var(--radius-pill);
+		background: var(--ink);
 	}
 
 	.close:active {
@@ -272,7 +312,7 @@
 	}
 
 	.close:focus-visible {
-		outline: 2px solid currentColor;
+		outline: 2px solid var(--ink);
 		outline-offset: 2px;
 	}
 </style>
