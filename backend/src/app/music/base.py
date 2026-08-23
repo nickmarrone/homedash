@@ -46,6 +46,12 @@ class Track:
     # a track off or leave a silent gap.
     duration_ms: int | None
     track_number: int | None
+    # The album this track belongs to, which is where its cover art lives.
+    # Carried on the track rather than looked up later because a queue can be
+    # started from an explicit list of tracks, with no album in the request to
+    # go back to. Optional so a library that cannot say keeps working - the
+    # panel falls back to its placeholder.
+    album_id: str | None = None
 
 
 class MusicLibrary(Protocol):

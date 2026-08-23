@@ -127,6 +127,23 @@ def test_no_configured_library_means_no_parent_filter_at_all():
     assert "parentId" not in calls[0]["params"]
 
 
+def test_a_track_carries_the_album_its_cover_lives_on():
+    """The panel shows a cover while a track plays, and the speaker cannot
+    supply one for a URL it was handed - so the album has to ride along on the
+    track, not be looked up again from a request that may not name one."""
+    library, _ = build({"Items": [{"Id": "t1", "Name": "X", "AlbumId": "b7"}]})
+    (track,) = library.tracks("b1")
+    assert track.album_id == "b7"
+
+
+def test_a_track_with_no_album_id_falls_back_to_the_album_asked_for():
+    """The request was scoped to one album by parentId, so the answer is known
+    either way; a missing field must not cost the cover."""
+    library, _ = build({"Items": [{"Id": "t1", "Name": "X"}]})
+    (track,) = library.tracks("b1")
+    assert track.album_id == "b1"
+
+
 def test_track_durations_are_converted_from_jellyfin_ticks():
     """Jellyfin measures in 100-nanosecond ticks. Treating them as milliseconds
     would report a four-minute song as eleven hours."""

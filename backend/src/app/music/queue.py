@@ -95,6 +95,21 @@ class QueueManager:
     def has(self, player_id: int) -> bool:
         return player_id in self.queues
 
+    def current(self, player_id: int) -> Track | None:
+        """The track this speaker was actually sent, or None.
+
+        Read without the lock on purpose - it is one dict lookup answering a
+        GET, and blocking a panel refresh behind a track change to hand it
+        metadata that is a few milliseconds newer would be a poor trade.
+
+        This exists because the speaker cannot answer it. A HEOS speaker given
+        a bare URL has no metadata to report and describes the stream instead,
+        so the panel would show a bitrate where the song title goes. HomeDash
+        sent the track, so HomeDash is the one that knows what it is.
+        """
+        queue = self.queues.get(player_id)
+        return queue.current if queue is not None else None
+
     def snapshot(self, player_id: int) -> dict | None:
         """What the panel shows about the queue, or None when there isn't one."""
         queue = self.queues.get(player_id)

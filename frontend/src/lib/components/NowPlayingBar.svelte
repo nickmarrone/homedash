@@ -14,8 +14,9 @@
 
 	const media = $derived(player.now_playing);
 
-	// Art comes off the speaker's own metadata, which points at whatever host
-	// the stream came from. When that does not load, the browser paints its
+	// For a HomeDash queue this is a proxied Jellyfin cover; for anything the
+	// speaker is playing on its own it is whatever host that stream came from,
+	// which may not answer. When it does not load, the browser paints its
 	// broken-image glyph - the same failure mode as an emoji on a Pi, and just
 	// as visible across a kitchen. Remember the URL that failed and fall back
 	// to the plain placeholder instead; a new track clears it by having a

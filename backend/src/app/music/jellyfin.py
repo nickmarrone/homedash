@@ -169,6 +169,11 @@ class JellyfinLibrary:
                 album=item.get("Album"),
                 duration_ms=_ticks_to_ms(item.get("RunTimeTicks")),
                 track_number=item.get("IndexNumber"),
+                # Falls back to the album that was asked for. Jellyfin returns
+                # AlbumId on audio items, but the request was already scoped to
+                # one album by parentId, so the answer is known either way and
+                # the cover must not go missing over a field name.
+                album_id=item.get("AlbumId") or album_id,
             )
             for item in payload.get("Items", [])
             if item.get("Id")

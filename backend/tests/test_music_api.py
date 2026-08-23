@@ -179,8 +179,24 @@ class FakeLibrary:
 
     def __init__(self, tracks=None, error=None):
         self._tracks = tracks if tracks is not None else [
-            Track(id="t1", title="One", artist="A", album="B", duration_ms=1000, track_number=1),
-            Track(id="t2", title="Two", artist="A", album="B", duration_ms=1000, track_number=2),
+            Track(
+                id="t1",
+                title="One",
+                artist="A",
+                album="B",
+                duration_ms=1000,
+                track_number=1,
+                album_id="b1",
+            ),
+            Track(
+                id="t2",
+                title="Two",
+                artist="A",
+                album="B",
+                duration_ms=1000,
+                track_number=2,
+                album_id="b1",
+            ),
         ]
         self._error = error
         self.headers = {"Authorization": "MediaBrowser Token=\"x\""}
@@ -392,6 +408,52 @@ def test_the_players_response_carries_the_queue_the_speaker_cannot_report():
             "remaining": 1,
             "track": {"id": "t1", "title": "One"},
         }
+    finally:
+        monkey.undo()
+
+
+def test_a_homedash_queue_answers_for_the_speaker_about_what_is_playing():
+    """The bug this fixes: a HEOS speaker handed a bare URL has no metadata for
+    it and describes the stream instead, so the panel showed a bitrate where
+    the song title goes and the speaker's own art URL where the cover goes.
+    HomeDash sent the track, so HomeDash says what it is."""
+    controller, heos = connected_controller()
+    # What a speaker actually reports for a URL it was handed.
+    heos.players[1].now_playing_media.song = "160kbps MP3"
+    heos.players[1].now_playing_media.artist = None
+    heos.players[1].now_playing_media.album = None
+    heos.players[1].now_playing_media.image_url = "http://speaker/station.jpg"
+    heos.players[1].now_playing_media.duration = 0
+
+    queues, _ = queue_manager()
+    client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+    try:
+        client.post("/api/music/players/1/play", json={"album_id": "b1"})
+        playing = client.get("/api/music/players").json()["players"][0]["now_playing"]
+        assert playing["title"] == "One"
+        assert playing["artist"] == "A"
+        assert playing["album"] == "B"
+        # Proxied through HomeDash, so the Jellyfin API key stays server-side.
+        assert playing["image_url"] == "/api/music/art/b1"
+        # The speaker reports 0 for a stream it did not choose; Jellyfin knows.
+        assert playing["duration_ms"] == 1000
+        # ...but the speaker is still the only one who knows how far in it is.
+        assert playing["position_ms"] == 12000
+    finally:
+        monkey.undo()
+
+
+def test_a_speaker_playing_its_own_source_keeps_its_own_metadata():
+    """The override applies only where HomeDash owns the queue. A speaker
+    playing Spotify or a radio station reports perfectly good metadata, and
+    replacing it would be a regression on the transport-only setup."""
+    controller, _ = connected_controller()
+    queues, _ = queue_manager()
+    client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+    try:
+        playing = client.get("/api/music/players").json()["players"][0]["now_playing"]
+        assert playing["title"] == "Weightless"
+        assert playing["image_url"] == "http://speaker/art.jpg"
     finally:
         monkey.undo()
 

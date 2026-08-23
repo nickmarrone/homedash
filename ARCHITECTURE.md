@@ -248,6 +248,20 @@ nothing at all. The route asks `QueueManager` first and falls through to the
 speaker only when there is no HomeDash queue — which is right for a speaker
 playing from one of its own sources.
 
+**HomeDash answers for the speaker about what is playing.** A speaker handed a
+bare URL has no metadata for it and falls back to describing the stream, so the
+panel showed a bitrate and a codec where the song title goes, and the speaker's
+own art URL — pointing at nothing — where the cover goes. Whenever there is a
+HomeDash queue, `GET /api/music/players` replaces `now_playing` with the
+Jellyfin track it actually sent: title, artist, album, its duration, and a
+cover at `/api/music/art/{album_id}`. Only `position_ms` is still the speaker's,
+because it is the only party that knows it. A speaker playing one of its own
+sources reports perfectly good metadata and keeps it.
+
+The album a cover lives on rides along on `Track.album_id` rather than being
+looked up again, because a queue can be started from an explicit list of tracks
+with no album in the request.
+
 The queue and the token store are in-process, like the weather cache. **A restart
 therefore stops the music after the current track.**
 

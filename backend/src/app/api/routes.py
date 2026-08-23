@@ -406,6 +406,33 @@ def _controller_or_503() -> HeosController:
     return controller
 
 
+def _now_playing_from_track(track, reported: dict | None) -> dict:
+    """What is playing, according to the side that actually knows.
+
+    A speaker handed a bare URL has no metadata for it, so it falls back to
+    describing the stream - which is why the panel showed a bitrate and a codec
+    where the song title goes, and no cover at all. Whenever HomeDash owns the
+    queue it knows exactly which Jellyfin track it sent, so it answers for the
+    speaker rather than repeating what the speaker guessed.
+
+    The one thing that is still taken from the speaker is the position: it is
+    the only party that knows how far into the track it is.
+
+    Art is a HomeDash URL rather than a Jellyfin one for the same reason the
+    audio is proxied - the API key must never reach the browser.
+    """
+    return {
+        "title": track.title,
+        "artist": track.artist,
+        "album": track.album,
+        "image_url": f"/api/music/art/{track.album_id}" if track.album_id else None,
+        # Jellyfin's duration is authoritative; the speaker usually reports 0
+        # for a URL stream, which would hide the progress bar entirely.
+        "duration_ms": track.duration_ms or (reported or {}).get("duration_ms"),
+        "position_ms": (reported or {}).get("position_ms"),
+    }
+
+
 @router.get("/api/music/players")
 def get_music_players() -> dict:
     """Every speaker, with what it is doing right now.
@@ -427,6 +454,12 @@ def get_music_players() -> dict:
         # What HomeDash is holding for this speaker, which the speaker itself
         # cannot report: as far as it knows it was handed one stream.
         player["queue"] = queues.snapshot(player["id"]) if queues is not None else None
+        if queues is not None:
+            track = queues.current(player["id"])
+            if track is not None:
+                player["now_playing"] = _now_playing_from_track(
+                    track, player.get("now_playing")
+                )
     return {
         "connected": connected,
         "library": library_configured(),

@@ -207,6 +207,13 @@ export interface MusicPlayer {
 	queue: MusicQueue | null;
 }
 
+/** What is on one speaker right now.
+ *
+ * Two sources behind one shape. When HomeDash owns the queue this is the
+ * Jellyfin track it sent, because a speaker handed a bare URL has no metadata
+ * for it and describes the stream instead - a bitrate where the title goes.
+ * Otherwise it is whatever the speaker itself reports about its own source.
+ * The panel does not need to know which; the server has already decided. */
 export interface NowPlaying {
 	title: string | null;
 	artist: string | null;

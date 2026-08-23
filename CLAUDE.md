@@ -620,6 +620,35 @@ Verified in real Chrome at both orientations against a canned library
 (`tools/panel/music-shot.mjs` in the harness worktree), and the race has a
 regression test that fails without the lock.
 
+### The speaker was naming the song, and it should not have been (2026-08-23)
+
+The second thing found by living with it: a playing track was captioned
+`160kbps` and something about a codec, and the cover was missing.
+
+- **A HEOS speaker handed a bare URL has no metadata for it.** It describes
+  the stream instead - which is a perfectly sensible thing for it to do, and
+  exactly the wrong thing to put on a kitchen wall. The panel was rendering
+  `now_playing` straight from the speaker, so it was rendering the bitrate.
+- **HomeDash sent the track, so HomeDash answers for it.** Whenever there is a
+  HomeDash queue, `/api/music/players` replaces `now_playing` with the Jellyfin
+  track: title, artist, album, duration, and a cover proxied from
+  `/api/music/art/{album_id}`. The one field still taken from the speaker is
+  the position, which is the only thing it is the authority on.
+- **Server-side, not in the components.** Three surfaces read `now_playing` -
+  the bar, the overlay, and the screensaver caption - and one override fixed
+  all three without any of them learning that a queue exists.
+- **The album rides on the track** (`Track.album_id`), because a queue can be
+  started from an explicit list of tracks with no album in the request to go
+  back to. It falls back to the album that was browsed, which the request was
+  already scoped to, so a missing Jellyfin field cannot cost the cover.
+- **The override is scoped to a HomeDash queue.** A speaker playing Spotify or
+  a radio station reports good metadata and keeps it - taking that away would
+  have been a regression on the transport-only setup.
+
+Verified in real Chrome at both orientations, which is what confirms a
+*relative* art URL resolves and actually paints rather than leaving the
+broken-image glyph the panel already had a fallback for.
+
 ---
 
 ## Future features (post-v1)
