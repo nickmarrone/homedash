@@ -100,12 +100,24 @@ class JellyfinLibrary:
     # -- browsing ----------------------------------------------------------
 
     def artists(self) -> list[Artist]:
+        # SortName is asked for explicitly because the panel needs it, not just
+        # the server: the list comes back ordered by it, and the A-Z rail has
+        # to index on the same string or its letters would not run in order.
         payload = self._request(
             "/Artists",
-            {"sortBy": "SortName", "sortOrder": "Ascending", "startIndex": 0},
+            {
+                "sortBy": "SortName",
+                "sortOrder": "Ascending",
+                "startIndex": 0,
+                "fields": "SortName",
+            },
         )
         return [
-            Artist(id=item["Id"], name=item.get("Name") or "Unknown artist")
+            Artist(
+                id=item["Id"],
+                name=item.get("Name") or "Unknown artist",
+                sort_name=item.get("SortName") or item.get("Name") or "",
+            )
             for item in payload.get("Items", [])
             if item.get("Id")
         ]

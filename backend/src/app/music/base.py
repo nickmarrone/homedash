@@ -19,6 +19,11 @@ from typing import Protocol
 class Artist:
     id: str
     name: str
+    # What the library sorted this artist by, which is not always the name it
+    # displays: Jellyfin files "The Beatles" under B. The panel's A-Z rail
+    # jumps by position in the list, so it has to index on the same string the
+    # list was ordered by or the letters would not run downwards.
+    sort_name: str = ""
 
 
 @dataclass(frozen=True)

@@ -240,6 +240,11 @@ export interface MusicPlayers {
 export interface LibraryArtist {
 	id: string;
 	name: string;
+	/** What the library sorted this artist under, which is not always the name
+	 * shown: Jellyfin files "The Beatles" as "Beatles, The". The A-Z rail jumps
+	 * by position in the list, so it has to index on this rather than on `name`
+	 * or its letters would not run downwards. */
+	sort_name: string;
 }
 
 export interface LibraryAlbum {

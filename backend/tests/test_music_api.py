@@ -191,7 +191,7 @@ class FakeLibrary:
 
     def artists(self):
         self._maybe_fail()
-        return [Artist(id="a1", name="Artist")]
+        return [Artist(id="a1", name="The Artist", sort_name="Artist, The")]
 
     def albums(self, artist_id=None):
         self._maybe_fail()
@@ -229,7 +229,12 @@ def test_browsing_returns_one_level_at_a_time():
     try:
         artists = client.get("/api/music/library?kind=artists").json()
         assert artists["kind"] == "artists"
-        assert artists["items"] == [{"id": "a1", "name": "Artist"}]
+        # sort_name rides along so the panel's A-Z rail can index on the same
+        # string the list was ordered by, rather than on a display name the
+        # library files under a different letter.
+        assert artists["items"] == [
+            {"id": "a1", "name": "The Artist", "sort_name": "Artist, The"}
+        ]
 
         tracks = client.get("/api/music/library?kind=tracks&parent=b1").json()
         assert [t["title"] for t in tracks["items"]] == ["One", "Two"]

@@ -10,9 +10,10 @@
 > Phase 3) — but it is no longer blocking: the panel goes dark either way.
 >
 > Everything below Phase 4 is post-v1; what has landed there is recorded under "Landed
-> after v1" — which now includes the first half of the music feature: HEOS playback
-> control, with the Jellyfin library still to come. The other obvious next step is the
-> Immich photo source, which the `PhotoSource` protocol already has a seam for.
+> after v1" — which now includes the whole music feature: HEOS playback control and the
+> Jellyfin library, browsed on the panel and played on the speakers — and as of
+> 2026-08-23 it has run on the real hardware. The other obvious next step is the Immich
+> photo source, which the `PhotoSource` protocol already has a seam for.
 
 An open-source, self-hosted wall-mounted family calendar in the spirit of Skylight and Hearth. Runs as a Docker container; displayed on a wall-mounted Raspberry Pi with a touch screen, locked into the app.
 
@@ -535,9 +536,9 @@ hardware before the harder half depends on them.
 - `homedash-heos-probe` is the `screen_agent.py probe` of this feature — the hardware
   questions here can only be answered by the hardware.
 
-**Not yet run against real speakers.** Everything above is verified against a fake
-HEOS system and in real Chrome at both orientations. `homedash-heos-probe` is the
-first thing to run on the actual hardware.
+**Since run against real speakers** (2026-08-23), which is where the queue race
+below was found. Everything else above was verified against a fake HEOS system
+and in real Chrome at both orientations, and held up.
 
 ### The Jellyfin library (2026-08-22)
 
@@ -580,7 +581,44 @@ The proxy was checked over a real socket for full fetches, byte ranges with a
 correct 206 and `Content-Range`, and for keeping the API key in the header and
 out of the query string.
 
-**Also not yet run against real speakers or a real Jellyfin.**
+**Since run against both** (2026-08-23) — see the entry below for what that
+turned up.
+
+### Two albums in a row, and an A-Z rail (2026-08-23)
+
+The first bug reported from actually living with the music feature: picking one
+album and then another sometimes played a song from the first.
+
+- **The queue was racing itself, and pyheos is why.** Its dispatcher runs every
+  pushed event as its own task, so "a track ended" and "somebody picked a new
+  album" are genuinely concurrent. The ending track sent its successor, the new
+  album sent its first track, and whichever command won the race inside pyheos
+  is what the speaker played - while HomeDash's queue was certain it was on the
+  new album. Fixed with a per-speaker lock held across the command, not just
+  the state change, which also restores the ordering of the events themselves.
+  The transport route's stop went the same way: clearing the queue while the
+  next track was in flight stopped the music and then let it start again.
+- **`awaiting_start` now clears only on `play`.** It used to clear on any
+  non-stop state, so a transient `pause` or `unknown` before the stream opened
+  would arm the queue to advance on the tail of the *previous* track.
+- **Replacing the queue was already the intent** - picking an album means "play
+  this and forget the rest". It was the race that broke it, not the design.
+- **Nothing about playback needs a browser open.** The queue lives in the
+  server, so the panel, a phone, or nothing at all makes no difference; that
+  was already true and is now written down where somebody will find it.
+- **The A-Z rail indexes on `sort_name`, not the displayed name.** Jellyfin
+  files "The Beatles" under B and returns the list in that order, so a rail
+  built from display names would point its T at a row between the As and the
+  Cs. `/Artists` now asks for `fields=SortName` and it rides through to the
+  panel.
+- **The rail is a drag, not 27 taps.** 27 letters on a 1080px panel are ~35px
+  each, well under this project's 48px rule and not fixable - so the gesture is
+  a pointer-captured scrub and the gaps between letters are live. Empty letters
+  stay put, dimmed, and jump to the next letter that has something.
+
+Verified in real Chrome at both orientations against a canned library
+(`tools/panel/music-shot.mjs` in the harness worktree), and the race has a
+regression test that fails without the lock.
 
 ---
 

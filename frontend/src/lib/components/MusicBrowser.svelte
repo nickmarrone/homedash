@@ -35,6 +35,102 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
+	// The A-Z rail. `#` first, for everything that does not begin with a Latin
+	// letter, so a library of numbered soundtracks is still reachable.
+	const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))];
+	// Below this the list fits on a screen and the rail is only clutter.
+	const RAIL_MIN_ARTISTS = 20;
+
+	let listEl = $state<HTMLUListElement | null>(null);
+	let railEl = $state<HTMLElement | null>(null);
+	let scrubbing = $state(false);
+	let activeLetter = $state<string | null>(null);
+
+	function letterOf(name: string): string {
+		// Decompose first, so "Étienne" files under E rather than under `#`.
+		const first = name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').charAt(0);
+		const upper = first.toUpperCase();
+		return upper >= 'A' && upper <= 'Z' ? upper : '#';
+	}
+
+	/** Letter to the index of the first artist filed under it.
+	 *
+	 * Built from `sort_name`, which is what the server ordered the list by. A
+	 * rail built from display names would point its T at a row sitting between
+	 * the As and the Cs. */
+	const letterIndex = $derived.by(() => {
+		const map = new Map<string, number>();
+		if (level.kind !== 'artists') return map;
+		items.forEach((item, index) => {
+			const artist = item as LibraryArtist;
+			const letter = letterOf(artist.sort_name || artist.name);
+			if (!map.has(letter)) map.set(letter, index);
+		});
+		return map;
+	});
+
+	const showRail = $derived(level.kind === 'artists' && items.length >= RAIL_MIN_ARTISTS);
+
+	function jumpTo(letter: string) {
+		let index = letterIndex.get(letter);
+		if (index === undefined) {
+			// Nothing under this letter. Land on the next one that has
+			// something, so a finger dragged down the rail never sticks on the
+			// gaps - and fall back to the previous one at the end of the
+			// alphabet, where there is no next.
+			const from = LETTERS.indexOf(letter);
+			for (let i = from + 1; i < LETTERS.length && index === undefined; i++) {
+				index = letterIndex.get(LETTERS[i]);
+			}
+			for (let i = from - 1; i >= 0 && index === undefined; i--) {
+				index = letterIndex.get(LETTERS[i]);
+			}
+		}
+		if (index === undefined || !listEl) return;
+		const row = listEl.children[index] as HTMLElement | undefined;
+		if (!row) return;
+		// Relative rather than `scrollIntoView`: the latter also scrolls the
+		// overlay behind the list, which on a wall panel moves the whole page.
+		listEl.scrollTop += row.getBoundingClientRect().top - listEl.getBoundingClientRect().top;
+	}
+
+	/** Which letter a point on the rail means.
+	 *
+	 * Measured against the rail's own box rather than hit-testing each letter,
+	 * because the useful gesture here is a drag: 27 targets on a 1080px panel
+	 * are ~35px each, too small to tap reliably but easy to scrub through.
+	 */
+	function letterAt(clientY: number): string {
+		if (!railEl) return LETTERS[0];
+		const rect = railEl.getBoundingClientRect();
+		const slot = Math.floor(((clientY - rect.top) / rect.height) * LETTERS.length);
+		return LETTERS[Math.min(LETTERS.length - 1, Math.max(0, slot))];
+	}
+
+	function railDown(event: PointerEvent) {
+		if (!railEl) return;
+		railEl.setPointerCapture(event.pointerId);
+		scrubbing = true;
+		activeLetter = letterAt(event.clientY);
+		jumpTo(activeLetter);
+		// Suppresses the click that would otherwise follow and repeat the jump,
+		// and stops the drag turning into a page scroll.
+		event.preventDefault();
+	}
+
+	function railMove(event: PointerEvent) {
+		if (!scrubbing) return;
+		const next = letterAt(event.clientY);
+		if (next === activeLetter) return;
+		activeLetter = next;
+		jumpTo(next);
+	}
+
+	function railUp() {
+		scrubbing = false;
+		activeLetter = null;
+	}
+
 	function descend(next: Level) {
 		history = [...history, level];
 		level = next;
@@ -128,18 +224,42 @@
 	{:else if items.length === 0}
 		<p class="note">Nothing here.</p>
 	{:else if level.kind === 'artists'}
-		<ul class="rows">
-			{#each items as artist (artist.id)}
-				<li>
-					<button
-						type="button"
-						onclick={() => descend({ kind: 'albums', artist: artist as LibraryArtist })}
-					>
-						{(artist as LibraryArtist).name}
-					</button>
-				</li>
-			{/each}
-		</ul>
+		<div class="indexed">
+			<ul class="rows" bind:this={listEl}>
+				{#each items as artist (artist.id)}
+					<li>
+						<button
+							type="button"
+							onclick={() => descend({ kind: 'albums', artist: artist as LibraryArtist })}
+						>
+							{(artist as LibraryArtist).name}
+						</button>
+					</li>
+				{/each}
+			</ul>
+			{#if showRail}
+				<nav
+					class="rail"
+					aria-label="Jump to letter"
+					bind:this={railEl}
+					onpointerdown={railDown}
+					onpointermove={railMove}
+					onpointerup={railUp}
+					onpointercancel={railUp}
+				>
+					{#each LETTERS as letter (letter)}
+						<button
+							type="button"
+							class:present={letterIndex.has(letter)}
+							class:active={activeLetter === letter}
+							onclick={() => jumpTo(letter)}
+						>
+							{letter}
+						</button>
+					{/each}
+				</nav>
+			{/if}
+		</div>
 	{:else if level.kind === 'albums'}
 		<ul class="grid">
 			{#each items as album (album.id)}
@@ -246,6 +366,66 @@
 		max-width: 900px;
 		margin: 0 auto;
 		width: 100%;
+	}
+
+	/* The list and its A-Z rail. Centred as a pair so the rail sits against the
+	   edge of the list rather than a metre away at the edge of a 1920px panel. */
+	.indexed {
+		display: flex;
+		justify-content: center;
+		gap: 0.25rem;
+		flex: 1;
+		min-height: 0;
+	}
+
+	/* Auto margins would absorb the free space and shove the rail out to the
+	   panel edge, a long reach from a list capped at 900px. */
+	.indexed .rows {
+		margin: 0;
+	}
+
+	.rail {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		flex: none;
+		width: 2.25rem;
+		padding: 0.25rem 0;
+		/* The gesture is a drag down the strip, so the browser must not claim
+		   the vertical pan for itself. */
+		touch-action: none;
+		user-select: none;
+	}
+
+	/* Equal slots, so a letter's box is exactly the slice of the strip that
+	   `letterAt` maps to it and the gaps between letters are not dead. */
+	.rail button {
+		flex: 1 1 0;
+		display: grid;
+		place-items: center;
+		border: none;
+		background: transparent;
+		padding: 0;
+		color: inherit;
+		font: inherit;
+		font-size: 0.75rem;
+		font-weight: 600;
+		line-height: 1;
+		/* Letters with nothing behind them stay visible rather than being
+		   removed: a rail whose letters move as the library grows is one you
+		   have to read instead of aim at. Tapping one still lands on the next
+		   letter that does have something. */
+		opacity: 0.28;
+		cursor: pointer;
+	}
+
+	.rail button.present {
+		opacity: 0.65;
+	}
+
+	.rail button.active {
+		opacity: 1;
+		transform: scale(1.4);
 	}
 
 	.rows li button {

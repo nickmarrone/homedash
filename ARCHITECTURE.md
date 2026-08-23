@@ -181,6 +181,12 @@ deployment that has no music configured. One call is also all that is needed
 for the lifetime of the process: pyheos re-loads players on reconnect only if
 they were ever loaded, so this is what arms that too.
 
+**An artist carries the name the library sorted it under.** Jellyfin files "The
+Beatles" as "Beatles, The" and returns the list in that order, so `Artist` has a
+`sort_name` alongside its display name and `/Artists` asks for `fields=SortName`
+explicitly. The panel's A–Z rail jumps by position in the list; indexed on the
+display name it would point its T at a row sitting between the As and the Cs.
+
 **Progress events are dropped.** HEOS emits one per second for the playing
 speaker. Each is a legitimate update, but forwarding them would put an SSE
 message per second per speaker onto a panel that only needs to know the track
@@ -539,7 +545,7 @@ single-calendar panel, where the legend renders nothing at all.
 | `PanelBlank.svelte` | Plain black, when the schedule says the screen should be off |
 | `NowPlayingBar.svelte` | The sticky strip under the calendar, while there is a track to act on |
 | `MusicOverlay.svelte` | Full-screen music: Now Playing and Library tabs |
-| `MusicBrowser.svelte` | Artists → albums → tracks, one level at a time, with a history stack |
+| `MusicBrowser.svelte` | Artists → albums → tracks, one level at a time, with a history stack and an A–Z rail |
 | `NowPlaying.svelte` | Art, title, artist, album, progress |
 | `TransportControls.svelte` | Play/pause/skip/stop, inline SVG, compact and full |
 | `PlayerPicker.svelte` | Which speaker; renders nothing for a one-speaker household |
@@ -581,6 +587,15 @@ icon font.
 **Touch targets are 48px minimum** — "the smallest target that stays reliable for a
 fingertip on a wall panel, where you are often reaching rather than aiming." Press feedback
 is `:active { transform: scale(0.97) }`, because hover does not exist on touch.
+
+The one deliberate exception is the A–Z rail in `MusicBrowser.svelte`: 27 letters down a
+1080px-tall panel are ~35px each and cannot be made bigger without ceasing to be an
+alphabet. It is therefore built as a *drag* rather than a set of taps — `letterAt()` maps a
+pointer's Y onto a slot against the rail's own box, so the gaps between letters are live
+too, and the whole strip is one pointer-captured gesture. Letters with nothing behind them
+stay in place, dimmed, and jump to the next letter that does have something: a rail whose
+letters move as the library grows is one you have to read instead of aim at. It appears
+only above 20 artists, and only on the artists level.
 
 ### Orientation
 

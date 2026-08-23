@@ -52,6 +52,24 @@ def test_artists_are_parsed_into_ids_and_names():
     assert [(a.id, a.name) for a in library.artists()] == [("a1", "Marconi Union")]
 
 
+def test_an_artist_carries_the_name_the_library_sorted_it_under():
+    """Jellyfin files "The Beatles" under B, and the list comes back in that
+    order. The panel's A-Z rail jumps by position, so it has to be handed the
+    sort name - indexing on the display name would put a T on a row sitting
+    between the As and the Cs."""
+    library, calls = build(
+        {"Items": [{"Id": "a1", "Name": "The Beatles", "SortName": "Beatles, The"}]}
+    )
+    (artist,) = library.artists()
+    assert (artist.name, artist.sort_name) == ("The Beatles", "Beatles, The")
+    assert "SortName" in calls[0]["params"]["fields"]
+
+
+def test_an_artist_with_no_sort_name_falls_back_to_its_display_name():
+    library, _ = build({"Items": [{"Id": "a1", "Name": "Marconi Union"}]})
+    assert library.artists()[0].sort_name == "Marconi Union"
+
+
 def test_an_item_with_no_id_is_skipped_rather_than_crashing_the_browse():
     """Jellyfin has returned odd rows for damaged library entries. One of them
     should cost that row, not the whole screen."""
