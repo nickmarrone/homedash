@@ -111,6 +111,18 @@ these — the row survives precisely *because* the rebuild ran:
   wall is still being served — which separates "the calendar still has it" from "this
   row should have been rebuilt away".
 
+**One `events` row per UID, and it holds the master.** A recurring series and every
+`RECURRENCE-ID` override of it share a single UID. Storing a row per VEVENT and keying them
+by UID meant the last component seen won — and that is an override, which carries no RRULE.
+Moving one soccer practice therefore replaced the series' stored VEVENT with that single
+Thursday and orphaned the row holding the actual rule. Nothing on the panel showed it, since
+the expansion has already happened by then; what broke was everything downstream of
+`raw_vevent` — re-expanding the window without re-fetching, which is the only reason the
+column exists, and `homedash-inspect-calendars --find`, which reported `recurring=False` for
+exactly the events somebody would be running it on. `_rows_to_store()` picks the master
+regardless of feed order, and falls back to an override only when the feed offers no master
+at all.
+
 **One overlap predicate, read by both views.** `queries.instances_touching` answers "which
 instances touch these local dates?" for the agenda and the grid alike. It was written twice
 before and the two copies disagreed: the agenda filtered on `starts_at` alone, so an event
