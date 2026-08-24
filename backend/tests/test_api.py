@@ -4,15 +4,15 @@ Constructed without the lifespan, so no migrations run, no scheduler starts
 and no weather is fetched - the session fixture supplies the schema.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import deps as api_deps
-from app.api.routes import weather as weather_routes
 from app.api.routes import router
+from app.api.routes import weather as weather_routes
 from app.config import Settings
 from app.db import get_session
 from app.models import CalendarSource, Event, EventInstance

@@ -18,7 +18,7 @@ Two things make this less obvious than a bare `astimezone()`:
    instead of converted.
 """
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -36,8 +36,3 @@ def to_local(value: datetime, tz: ZoneInfo, *, all_day: bool = False) -> datetim
     if all_day:
         return datetime(value.year, value.month, value.day, tzinfo=tz)
     return as_utc(value).astimezone(tz)
-
-
-def local_date(value: datetime, tz: ZoneInfo, *, all_day: bool = False) -> date:
-    """The local calendar date an instant falls on."""
-    return to_local(value, tz, all_day=all_day).date()

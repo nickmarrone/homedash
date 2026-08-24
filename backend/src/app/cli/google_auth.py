@@ -54,7 +54,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         if ok:
-            self.wfile.write(PAGE % (b"Authorized", b"You can close this tab and return to the terminal."))
+            self.wfile.write(
+                PAGE % (b"Authorized", b"You can close this tab and return to the terminal.")
+            )
         else:
             error = type(self).result.get("error", "no code returned").encode()
             self.wfile.write(PAGE % (b"Authorization failed", error))

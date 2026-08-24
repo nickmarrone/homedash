@@ -286,7 +286,11 @@ class TestAdapterDispatch:
         self._with_credentials(monkeypatch, {"g": {"client_id": "a", "client_secret": "b"}})
         with pytest.raises(ValueError, match="refresh_token"):
             sync_module.build_adapter(
-                self._source(kind="google", calendar_id="x@group.calendar.google.com", credentials_ref="g")
+                self._source(
+                    kind="google",
+                    calendar_id="x@group.calendar.google.com",
+                    credentials_ref="g",
+                )
             )
 
 

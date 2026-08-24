@@ -8,9 +8,9 @@ from sqlmodel import Session
 
 from app.api.routes import router
 from app.calendars.sync import seed_calendars_from_settings
-from app.devices import seed_device_from_settings
 from app.config import get_settings
 from app.db import engine, run_migrations
+from app.devices import seed_device_from_settings
 from app.music.service import start_music, stop_music
 from app.photos.observer import start_folder_watch
 from app.scheduler import run_photo_index, start_scheduler, stop_scheduler

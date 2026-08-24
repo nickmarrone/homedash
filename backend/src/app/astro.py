@@ -566,7 +566,10 @@ def sky_events(
         # Everything after the rate is specific to these coordinates: when the
         # radiant is highest in a dark sky here, how high that is, and whether
         # the Moon is up to spoil it.
-        detail = f"~{shower.zhr}/hr, best {_clock(viewing.best_at)}, radiant {round(viewing.altitude)}\u00b0 up"
+        detail = (
+            f"~{shower.zhr}/hr, best {_clock(viewing.best_at)}, "
+            f"radiant {round(viewing.altitude)}\u00b0 up"
+        )
         if viewing.moonlit:
             detail += ", bright moon"
         events.append(

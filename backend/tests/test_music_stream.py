@@ -181,14 +181,12 @@ class TestFailures:
         on the happy path, so every failure branch has to close it by hand.
         A leak here is one dangling connection per failed track."""
         opened = []
-        original = httpx.AsyncClient
 
         def handler(request):
             return httpx.Response(500)
 
         lib = patched(handler)
 
-        real_factory = None
         import app.music.jellyfin as jf
 
         real_factory = jf.httpx.AsyncClient

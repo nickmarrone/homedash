@@ -70,7 +70,8 @@ class TestTheChainRuns:
     def test_there_is_exactly_one_head(self):
         """Two heads is what a branched history looks like, and `upgrade head`
         refuses to run at all once it happens - at startup, in production."""
-        assert len(ScriptDirectory.from_config(alembic_config(pathlib.Path("x.db"))).get_heads()) == 1
+        scripts = ScriptDirectory.from_config(alembic_config(pathlib.Path("x.db")))
+        assert len(scripts.get_heads()) == 1
 
 
 class TestTheChainMatchesTheModels:

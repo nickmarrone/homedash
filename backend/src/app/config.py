@@ -299,19 +299,6 @@ class Settings(BaseSettings):
             )
         return self
 
-    def credentials_for(self, config: CalendarConfig) -> dict[str, Any]:
-        """The credential blob a calendar refers to, or an empty dict."""
-        if not config.credentials:
-            return {}
-        blob = self.calendar_credentials.get(config.credentials)
-        if blob is None:
-            raise ValueError(
-                f"calendar {config.name!r} references credentials "
-                f"{config.credentials!r}, which is not defined in "
-                "HOMEDASH_CALENDAR_CREDENTIALS"
-            )
-        return blob
-
     @property
     def database_url(self) -> str:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

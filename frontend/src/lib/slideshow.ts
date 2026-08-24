@@ -41,7 +41,7 @@ function slideOf(photos: Photo[]): Slide {
  *
  * The two groups are shuffled separately and only then merged, so pairing does
  * not depend on where a photo happened to land in one big shuffle. */
-export function buildSlides(photos: Photo[], random: () => number = Math.random): Slide[] {
+function buildSlides(photos: Photo[], random: () => number = Math.random): Slide[] {
 	const full = shuffle(
 		photos.filter((photo) => photo.slot === 'full'),
 		random

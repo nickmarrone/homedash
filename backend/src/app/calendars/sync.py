@@ -9,11 +9,11 @@ from sqlmodel import Session, select
 
 from app.calendars.base import CalendarSource as CalendarSourceProtocol
 from app.calendars.caldav_source import CalDAVCalendarSource
+from app.calendars.colors import color_for_index
 from app.calendars.google_auth import GoogleCredentials
 from app.calendars.google_source import GoogleCalendarSource
-from app.calendars.colors import color_for_index
-from app.calendars.localtime import as_utc
 from app.calendars.ics import ICSCalendarSource
+from app.calendars.localtime import as_utc
 from app.config import CalendarConfig, get_settings, source_key
 from app.models import CalendarSource, Event, EventInstance
 

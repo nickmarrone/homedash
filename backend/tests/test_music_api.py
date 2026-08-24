@@ -6,11 +6,12 @@ speakers at all should hide the music UI entirely, while one whose speakers are
 merely asleep should keep it and show nothing playing.
 """
 
+import asyncio
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-import asyncio
+from pyheos import CommandFailedError, ConnectionState
 
 from app.api.routes import music as routes_module
 from app.api.routes import router
@@ -19,9 +20,7 @@ from app.music.heos import HeosController
 from app.music.jellyfin import JellyfinError
 from app.music.queue import QueueManager
 from app.music.tokens import TokenStore
-from pyheos import CommandFailedError, ConnectionState
-
-from fake_heos import FakeHeos, FakePlayer
+from fake_heos import FakeHeos
 
 
 def run_(coro):
@@ -111,7 +110,7 @@ def test_every_supported_transport_action_is_accepted(action):
     controller, heos = connected_controller()
     client, monkey = make_client(controller=controller)
     try:
-        response = client.post(f"/api/music/players/1/transport", json={"action": action})
+        response = client.post("/api/music/players/1/transport", json={"action": action})
         assert response.status_code == 200
         assert heos.players[1].calls[0][0] == action
     finally:
@@ -411,7 +410,7 @@ def test_stopping_clears_the_queue_so_it_does_not_resume_by_itself():
     try:
         client.post("/api/music/players/1/play", json={"album_id": "b1"})
         client.post("/api/music/players/1/transport", json={"action": "stop"})
-        assert queues.has(1) is False
+        assert 1 not in queues.queues
         run_(queues.on_state(1, "stop"))
         assert played == [(1, "http://h/t1")]
     finally:

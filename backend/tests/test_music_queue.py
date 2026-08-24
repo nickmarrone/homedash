@@ -107,7 +107,7 @@ def test_the_queue_ends_after_the_last_track_rather_than_repeating_it():
         run(manager.on_state(1, "play"))
         run(manager.on_state(1, "stop"))
     assert [url for _, url in played] == ["http://h/t1", "http://h/t2"]
-    assert manager.has(1) is False
+    assert 1 not in manager.queues
 
 
 def test_pausing_does_not_advance_the_queue():
@@ -158,7 +158,7 @@ def test_skipping_past_the_last_track_ends_the_queue():
     manager, played = build()
     run(manager.start(1, album(1)))
     assert run(manager.next(1)) is True
-    assert manager.has(1) is False
+    assert 1 not in manager.queues
 
 
 def test_skipping_back_restarts_the_first_track_rather_than_underflowing():
@@ -203,7 +203,7 @@ def test_a_url_that_cannot_be_built_abandons_the_queue_rather_than_looping():
     manager, played = build(url_for=explode)
     run(manager.start(1, album()))
     assert played == []
-    assert manager.has(1) is False
+    assert 1 not in manager.queues
 
 
 def test_the_snapshot_reports_position_within_the_album():
@@ -326,7 +326,7 @@ def test_stopping_waits_for_a_track_change_already_on_its_way():
         await asyncio.sleep(0)
         stopping = asyncio.create_task(manager.stop(1))
         await asyncio.sleep(0)
-        assert manager.has(1) is True  # not cleared until the send finishes
+        assert 1 in manager.queues  # not cleared until the send finishes
 
         gate.set()
         await asyncio.gather(ending, stopping)
@@ -334,7 +334,7 @@ def test_stopping_waits_for_a_track_change_already_on_its_way():
 
     manager, played = run(main())
     assert played == [(1, "http://h/t1"), (1, "http://h/t2")]
-    assert manager.has(1) is False
+    assert 1 not in manager.queues
 
 
 def test_two_speakers_do_not_wait_on_each_other():

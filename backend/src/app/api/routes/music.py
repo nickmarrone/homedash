@@ -8,6 +8,7 @@ rather than discovering - see the "kid lock" note in CLAUDE.md.
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+from pyheos import HeosError
 
 from app.api.serializers import serialize_now_playing
 from app.music.heos import TRANSPORT_ACTIONS, HeosController, MusicUnavailable
@@ -21,7 +22,6 @@ from app.music.service import (
     music_configured,
 )
 from app.music.tokens import UrlTooLong
-from pyheos import HeosError
 
 router = APIRouter()
 

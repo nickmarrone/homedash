@@ -12,7 +12,7 @@ import recurring_ical_events
 from icalendar import Calendar
 
 from app.calendars.google_auth import GoogleCredentials
-from app.calendars.google_source import GoogleCalendarSource, GoogleApiError, items_to_vevents
+from app.calendars.google_source import GoogleApiError, GoogleCalendarSource, items_to_vevents
 
 WINDOW_START = datetime(2026, 8, 1, tzinfo=timezone.utc)
 WINDOW_END = datetime(2026, 9, 30, tzinfo=timezone.utc)
@@ -309,7 +309,10 @@ class TestAuthRecovery:
             return FakeResponse(payload={"access_token": f"at{len(posts)}", "expires_in": 3600})
 
         creds = GoogleCredentials("cid", "secret", "rt", post=post)
-        responses = [FakeResponse(status_code=401), FakeResponse(payload={"items": [], "nextSyncToken": "t"})]
+        responses = [
+            FakeResponse(status_code=401),
+            FakeResponse(payload={"items": [], "nextSyncToken": "t"}),
+        ]
         seen_headers = []
 
         def _get(url, params, headers):

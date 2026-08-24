@@ -13,10 +13,8 @@ one can survive is measured in an hour rather than a day.
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from app.calendars.ics import ICSCalendarSource
 import app.calendars.sync as sync_module
+from app.calendars.ics import ICSCalendarSource
 from app.calendars.sync import needs_full_resync
 from app.config import Settings
 from app.models import CalendarSource

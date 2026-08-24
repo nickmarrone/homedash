@@ -5,9 +5,7 @@ every minute, so a poll that re-fetches and rebuilds when nothing moved would
 undo the reason CalDAV is here at all.
 """
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import datetime, timezone
 
 from app.calendars.caldav_source import DIGEST_PREFIX, TOKEN_PREFIX, CalDAVCalendarSource
 

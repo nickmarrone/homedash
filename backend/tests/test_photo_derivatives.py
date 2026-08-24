@@ -7,7 +7,7 @@ out of it.
 """
 
 import pytest
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from app.photos.derivatives import (
     HALF_SIZES,
@@ -145,10 +145,15 @@ class TestRender:
         assert destination.exists()
 
     def test_a_non_image_raises_rather_than_writing_garbage(self, tmp_path):
+        """Named rather than bare `Exception`, which would also have passed if
+        a refactor made `render` raise a TypeError on its way in - and the
+        indexer's whole design depends on this being the *decode* failing, so
+        the file gets a row holding the error instead of being reopened on
+        every scan."""
         source = tmp_path / "notes.jpg"
         source.write_text("this is not a photo")
 
-        with pytest.raises(Exception):
+        with pytest.raises(UnidentifiedImageError):
             render(source, tmp_path / "out.jpg", (1920, 1080))
 
 

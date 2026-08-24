@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import app.scheduler as scheduler_module
 from app.api.routes import event_stream
 from app.config import ScreenScheduleConfig, Settings
 from app.devices import PANEL_DEVICE_ID, screen_state
 from app.models import Device
-import app.scheduler as scheduler_module
 
 # 10:30 UTC. The one hour a day when Kiritimati (+14), UTC, and Midway (-11)
 # are all on different dates - so a heartbeat that quietly used UTC, or the

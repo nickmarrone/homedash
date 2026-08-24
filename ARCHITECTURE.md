@@ -967,8 +967,22 @@ cd frontend && npm run check      # svelte-check, the only frontend gate
 docker compose up --build         # the real thing
 ```
 
-There is no CI, no Makefile, and no linter or formatter configured. Line length is held to
-roughly 95 characters by hand.
+There is no CI and no Makefile. Ruff is configured (`cd backend && uv run ruff check .`) and
+is expected to be clean; it is not a formatter and nothing reformats this code.
+
+**What it checks is deliberately narrow.** `E`, `F`, `I`, `B` — unused imports and locals,
+undefined names, import order, and bugbear's real-defect rules. Pyupgrade (`UP`) is left out
+on purpose: it wanted eighty-nine changes, every one a rewrite of correct code into
+differently-spelled correct code. A linter that opens with two hundred stylistic opinions on
+an existing codebase gets switched off within the week, and the rules that find actual
+defects go with it. Line length is 100 rather than the ~95 the code was held to by hand,
+because picking the exact number would have meant reflowing seventy readable lines.
+
+`E711`/`E712` are ignored repo-wide: SQLAlchemy filters are *expressions*, so
+`Model.flag == False` builds SQL where `not Model.flag` evaluates in Python and silently
+matches everything. Alembic's own files are exempt from import sorting — it writes them in
+its own order, and a rule that fails every `revision --autogenerate` teaches people to ignore
+the linter.
 
 ### Migrations
 

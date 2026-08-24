@@ -6,13 +6,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session, select
 
 from app.calendars.sync import sync_source
+from app.comets import refresh_comet_elements
 from app.config import get_settings
 from app.db import engine
 from app.devices import PANEL_DEVICE_ID, screen_state
 from app.models import CalendarSource, Device
 from app.photos.index import reindex
 from app.sse import broadcaster
-from app.comets import refresh_comet_elements
 from app.weather.client import refresh_weather
 
 logger = logging.getLogger(__name__)

@@ -140,8 +140,6 @@ export interface Weather {
 	hourly?: WeatherHourly;
 	air_quality?: WeatherAirQuality;
 	current_units?: WeatherUnits;
-	daily_units?: WeatherUnits;
-	hourly_units?: WeatherUnits;
 	astro?: Astro;
 	fetched_at?: string;
 }

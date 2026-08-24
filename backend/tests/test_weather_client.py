@@ -61,7 +61,8 @@ def empty_cache(monkeypatch):
 
 def serve(monkeypatch, forecast, air_quality=None):
     """Answer the two calls refresh_weather makes, in order."""
-    responses = [forecast, air_quality if air_quality is not None else FakeResponse(200, AIR_QUALITY)]
+    fallback = FakeResponse(200, AIR_QUALITY)
+    responses = [forecast, air_quality if air_quality is not None else fallback]
     calls = iter(responses)
     monkeypatch.setattr("app.weather.client.httpx.get", lambda *a, **k: next(calls))
 

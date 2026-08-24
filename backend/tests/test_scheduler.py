@@ -7,7 +7,6 @@ That only works if the instant handed over means what the scheduler thinks it
 means.
 """
 
-import os
 import time
 from datetime import datetime, timedelta, timezone
 

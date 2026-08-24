@@ -25,7 +25,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from pyheos import ConnectionState, Heos, HeosOptions, HeosPlayer, PlayState, SignalType
+from pyheos import ConnectionState, Heos, HeosPlayer, PlayState, SignalType
 
 logger = logging.getLogger(__name__)
 

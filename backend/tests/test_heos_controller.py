@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from app.music.heos import MusicUnavailable, HeosController
+from app.music.heos import HeosController, MusicUnavailable
 from fake_heos import FakeHeos, FakePlayer
 
 

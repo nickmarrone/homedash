@@ -99,9 +99,6 @@ class QueueManager:
             lock = self.locks[player_id] = asyncio.Lock()
         return lock
 
-    def has(self, player_id: int) -> bool:
-        return player_id in self.queues
-
     def current(self, player_id: int) -> Track | None:
         """The track this speaker was actually sent, or None.
 
