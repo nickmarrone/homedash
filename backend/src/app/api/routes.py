@@ -1,16 +1,16 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.serializers import serialize_instance
 from app.astro import astro_summary
 from app.comets import load_comet_elements, visible_comets
+from app.calendars.queries import instances_touching
 from app.calendars.grid import (
     VIEWS,
     GridItem,
@@ -24,7 +24,7 @@ from app.calendars.grid import (
 from app.config import get_settings
 from app.db import get_session
 from app.devices import screen_state, touch_last_seen
-from app.models import CalendarSource, Device, Event, EventInstance, Photo
+from app.models import CalendarSource, Device, Photo
 from app.music.heos import TRANSPORT_ACTIONS, HeosController
 from app.music.jellyfin import JellyfinError, JellyfinLibrary
 from app.music.service import (
@@ -59,36 +59,37 @@ def healthz() -> dict[str, str]:
 
 @router.get("/api/agenda")
 def get_agenda(session: SessionDep) -> list[dict]:
-    tz = ZoneInfo(settings.home_timezone)
-    today_local = datetime.now(tz).date()
-    today_start_utc = datetime(
-        today_local.year, today_local.month, today_local.day, tzinfo=tz
-    ).astimezone(timezone.utc)
-    # All-day rows are stored at UTC midnight of their calendar date as a
-    # placeholder, not as a real instant, so they have to be compared against
-    # that same anchor. Measuring them from local midnight instead drops
-    # today's all-day events entirely in any zone behind UTC, where local
-    # midnight is *later* than the placeholder they carry.
-    today_start_floating = datetime(today_local.year, today_local.month, today_local.day)
+    """What is coming up, as a flat list from today onwards.
 
-    rows = session.exec(
-        select(EventInstance, CalendarSource)
-        # Outer: an instance whose event or source has gone missing should
-        # still render, uncolored, rather than silently vanish from the panel.
-        .join(Event, EventInstance.event_id == Event.id, isouter=True)
-        .join(CalendarSource, Event.source_id == CalendarSource.id, isouter=True)
-        .where(
-            or_(
-                and_(EventInstance.all_day == False, EventInstance.starts_at >= today_start_utc),  # noqa: E712
-                and_(EventInstance.all_day == True, EventInstance.starts_at >= today_start_floating),  # noqa: E712
-            )
-        )
-        .order_by(EventInstance.starts_at)
-        .limit(200)
-    ).all()
+    Open-ended and capped by count rather than by date, because "the next 200
+    things" is what a wall calendar is actually asked for.
+
+    Each item carries `agenda_date`: the day the panel should file it under.
+    For almost everything that is simply the day it starts, but an event
+    already in progress starts in the past, and a forward-looking list has no
+    heading to put that under. Clamping it to today is what keeps a holiday
+    visible on its third morning instead of grouped beneath a date that is no
+    longer on screen. The panel does not compute this for the same reason it
+    computes no other date: it must not consult its own clock.
+    """
+    tz = ZoneInfo(settings.home_timezone)
+    today = datetime.now(tz).date()
+
+    rows = instances_touching(session, tz, first=today, limit=200)
 
     return [
-        serialize_instance(instance, source, tz) for instance, source in rows
+        serialize_instance(
+            instance,
+            source,
+            tz,
+            agenda_date=max(
+                local_dates_spanned(
+                    instance.starts_at, instance.ends_at, instance.all_day, tz
+                )[0],
+                today,
+            ).isoformat(),
+        )
+        for instance, source in rows
     ]
 
 
@@ -124,7 +125,7 @@ def get_calendar(
     anchor_date = normalize_anchor(view, requested, week_starts_on)
     first, last = period_bounds(view, anchor_date, week_starts_on)
 
-    rows = _instances_overlapping(session, first, last, tz)
+    rows = instances_touching(session, tz, first=first, last=last, pad_days=1)
     items = [
         GridItem(
             payload=serialize_instance(instance, source, tz),
@@ -153,47 +154,6 @@ def get_calendar(
         "next_anchor": step_anchor(view, anchor_date, 1).isoformat(),
         "days": build_days(items, first, last, anchor_date, view, today),
     }
-
-
-def _instances_overlapping(session: Session, first: date, last: date, tz: ZoneInfo):
-    """Every instance touching the local date range [first, last].
-
-    The predicate is an overlap, not a start-time cutoff: an event already in
-    progress when the period opens still belongs in every day it spans, and a
-    `starts_at >=` filter would drop it from the view entirely.
-
-    All-day rows are compared against floating date anchors because that is
-    how they are stored - see calendars/localtime.py.
-    """
-    # Widened by a day on each side so an event whose local date is in range
-    # but whose UTC instant sits outside it is still caught; build_days does
-    # the exact per-date bucketing afterwards.
-    range_start_utc = datetime(first.year, first.month, first.day, tzinfo=tz).astimezone(
-        timezone.utc
-    ) - timedelta(days=1)
-    range_end_utc = datetime(last.year, last.month, last.day, tzinfo=tz).astimezone(
-        timezone.utc
-    ) + timedelta(days=2)
-    range_start_floating = datetime(first.year, first.month, first.day) - timedelta(days=1)
-    range_end_floating = datetime(last.year, last.month, last.day) + timedelta(days=2)
-
-    timed = and_(
-        EventInstance.all_day == False,  # noqa: E712
-        EventInstance.starts_at < range_end_utc,
-        EventInstance.ends_at >= range_start_utc,
-    )
-    floating = and_(
-        EventInstance.all_day == True,  # noqa: E712
-        EventInstance.starts_at < range_end_floating,
-        EventInstance.ends_at >= range_start_floating,
-    )
-    return session.exec(
-        select(EventInstance, CalendarSource)
-        .join(Event, EventInstance.event_id == Event.id, isouter=True)
-        .join(CalendarSource, Event.source_id == CalendarSource.id, isouter=True)
-        .where(or_(timed, floating))
-        .order_by(EventInstance.starts_at)
-    ).all()
 
 
 @router.get("/api/calendars")

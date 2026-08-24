@@ -42,7 +42,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `sse.py` | `SSEBroadcaster` fan-out to connected panels |
 | `devices.py` | Screen-schedule arithmetic and the device row reconciler |
 | `api/routes.py` | Every HTTP endpoint, on one `APIRouter` |
-| `api/serializers.py` | `serialize_instance` — the shared event wire shape |
+| `api/serializers.py` | `serialize_instance` — the shared event wire shape, plus each view's own extras |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
 | `music/` | The HEOS connection and the speakers the panel controls |
@@ -62,6 +62,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `google_auth.py` | OAuth refresh-token credentials |
 | `sync.py` | `seed_calendars_from_settings`, `build_adapter`, `sync_source`, `sync_window` |
 | `grid.py` | Day/lookahead/week/month bucketing, anchors, period titles |
+| `queries.py` | `instances_touching` — the one overlap predicate both views read through |
 | `localtime.py` | `to_local` / `as_utc`, all-day floating-datetime handling |
 | `colors.py` | Fixed `PALETTE`, `color_for_index` |
 | `providers.py` | Provider detection for the inspect CLI |
@@ -109,6 +110,28 @@ these — the row survives precisely *because* the rebuild ran:
   appointment: it asks the calendar, with one forced fetch, whether the event on the
   wall is still being served — which separates "the calendar still has it" from "this
   row should have been rebuilt away".
+
+**One overlap predicate, read by both views.** `queries.instances_touching` answers "which
+instances touch these local dates?" for the agenda and the grid alike. It was written twice
+before and the two copies disagreed: the agenda filtered on `starts_at` alone, so an event
+already running when the range opened was dropped from it while the grid still showed it —
+a week-long holiday appeared on the wall on its first morning and then vanished for six
+days. The predicate is subtle enough to be worth centralising because `event_instances`
+holds two kinds of value in one column: a timed row carries a real UTC instant, an all-day
+row carries a *floating* midnight (see `localtime.py`), so every range check is two range
+checks.
+
+`pad_days` is the one knob. The grid passes 1 because `build_days` re-buckets by exact local
+date afterwards and only needs a superset — an instance whose local date is in range can
+carry a UTC instant that is not. The agenda passes 0 and renders what it is given.
+
+**The agenda says which day to file an item under.** Almost always the day it starts, but an
+in-progress event starts in the past and a forward-looking list has no heading for a date
+that has scrolled off it, so `agenda_date` is clamped to today. It is computed server-side
+for the same reason every other date is: the panel must not consult its own clock. This is
+also why `/api/agenda` and `/api/calendar` are *not* byte-identical in shape — they share a
+core and each adds what only it knows (`agenda_date` here, `continues_before`/`_after`
+there).
 
 ### `photos/`
 
@@ -355,7 +378,7 @@ be mostly in the past — on a Sunday, a snapped three-day view is two days alre
 | Endpoint | Returns |
 |---|---|
 | `GET /healthz` | Liveness |
-| `GET /api/agenda` | Flat chronological events, each with its `calendar: {id, name, color}` |
+| `GET /api/agenda` | Flat chronological events from today on, each with its `calendar: {id, name, color}` and an `agenda_date` |
 | `GET /api/calendar?view=day\|next3\|next5\|week\|month&anchor=` | Server-bucketed grid, plus title and prev/next anchors |
 | `GET /api/calendars` | The legend — every enabled source, so empty calendars still appear |
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |

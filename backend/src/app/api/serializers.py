@@ -1,8 +1,13 @@
 """The wire shape for an event instance.
 
-/api/agenda and /api/calendar must emit identical items - the frontend uses
-one renderer for both - so the shape lives here rather than being spelled out
-at each call site where the two could quietly drift apart.
+/api/agenda and /api/calendar must agree on every field they share, because
+the panel renders both from one TypeScript type - so the shared core lives
+here rather than being spelled out at each call site where the two could
+quietly drift apart.
+
+Each endpoint then adds what only it can know, through `**extra`: the grid
+adds `continues_before`/`continues_after`, the agenda adds `agenda_date`.
+Those are additions to the core, never redefinitions of it.
 """
 
 from zoneinfo import ZoneInfo
@@ -22,6 +27,10 @@ def serialize_instance(
     `source` is optional because the join is outer: an instance whose event or
     source has gone missing should still render, uncolored, rather than
     silently vanish from the panel.
+
+    `**extra` is for the caller's own fields - see the module docstring. It
+    comes last on purpose: a caller cannot use it to overwrite a core field
+    without that being visible right here.
     """
     return {
         "id": instance.id,

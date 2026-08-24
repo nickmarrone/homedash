@@ -25,7 +25,13 @@
 	let groups = $derived.by((): Group[] => {
 		const byDay = new Map<string, AgendaItem[]>();
 		for (const item of items) {
-			const key = dateKey(item.starts_at);
+			// The server's own answer to "which heading does this belong
+			// under", which is not always the day it starts: an event already
+			// in progress began on a date this list no longer shows, and would
+			// otherwise open a group above today for a day that is gone.
+			// Falls back to the start date so a response from an older backend
+			// still renders.
+			const key = item.agenda_date ?? dateKey(item.starts_at);
 			const list = byDay.get(key) ?? [];
 			list.push(item);
 			byDay.set(key, list);

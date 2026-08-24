@@ -4,7 +4,10 @@ export interface AgendaCalendar {
 	color: string;
 }
 
-export interface AgendaItem {
+/** The fields /api/agenda and /api/calendar both emit, and which must keep
+ * meaning the same thing in both - the backend builds them in one serializer
+ * for that reason. Each endpoint then adds what only it can know. */
+export interface EventItem {
 	id: number;
 	title: string;
 	location: string | null;
@@ -14,9 +17,19 @@ export interface AgendaItem {
 	calendar: AgendaCalendar | null;
 }
 
-/** One item as it appears inside a calendar grid: an agenda item plus where
+/** One item in the flat forward-looking list. */
+export interface AgendaItem extends EventItem {
+	/** The local date to file this under, `YYYY-MM-DD`. Normally the day it
+	 * starts - but an event already in progress starts in the past, and the
+	 * agenda has no heading for a day that has scrolled off it, so the server
+	 * clamps those to today. Computed there, not here, because the panel must
+	 * never consult its own clock. */
+	agenda_date: string;
+}
+
+/** One item as it appears inside a calendar grid: the shared shape plus where
  * it sits relative to the day it is being rendered on. */
-export interface CalendarGridItem extends AgendaItem {
+export interface CalendarGridItem extends EventItem {
 	continues_before: boolean;
 	continues_after: boolean;
 }
