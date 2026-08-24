@@ -67,7 +67,13 @@ def refresh_weather() -> bool:
         air_quality_resp = httpx.get(AIR_QUALITY_URL, params=air_quality_params, timeout=15.0)
         air_quality_resp.raise_for_status()
         air_quality = air_quality_resp.json()
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
+        # ValueError covers .json() on a body that is not JSON, which is not a
+        # hypothetical: a captive portal, a transparent proxy or a maintenance
+        # page all answer 200 with HTML, so raise_for_status is happy and the
+        # decode is what fails. This function's contract is "returns False on
+        # failure" and startup awaits it, so letting that escape would take the
+        # whole app down over the weather widget.
         logger.exception("Failed to fetch weather from Open-Meteo")
         return False
 
