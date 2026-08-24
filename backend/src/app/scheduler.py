@@ -164,27 +164,43 @@ def run_weather_refresh() -> None:
         logger.exception("Weather refresh failed")
 
 
+def _at_boot() -> datetime:
+    """Now, as an aware UTC instant, so a job runs at startup instead of after
+    one full interval.
+
+    Aware is the whole point. The scheduler is configured `timezone="UTC"`, and
+    APScheduler localizes a *naive* datetime into that timezone rather than
+    converting it - so a naive local `now()` is read as though the wall clock
+    were already UTC. Nothing sets TZ in the container today, which is the only
+    reason this was invisible; the day somebody adds `TZ: Europe/Berlin` for
+    readable logs, every job here would be scheduled an hour or two into the
+    future and the panel would come back from a restart blank, with no
+    heartbeat and no weather, for that long.
+    """
+    return datetime.now(timezone.utc)
+
+
 def start_scheduler() -> None:
     scheduler.add_job(
         run_slow_sync,
         "interval",
         minutes=settings.ics_poll_interval_minutes,
         id="ics_sync",
-        next_run_time=datetime.now(),
+        next_run_time=_at_boot(),
     )
     scheduler.add_job(
         run_fast_sync,
         "interval",
         minutes=settings.fast_poll_interval_minutes,
         id="fast_sync",
-        next_run_time=datetime.now(),
+        next_run_time=_at_boot(),
     )
     scheduler.add_job(
         run_heartbeat,
         "interval",
         seconds=HEARTBEAT_SECONDS,
         id="heartbeat",
-        next_run_time=datetime.now(),
+        next_run_time=_at_boot(),
     )
     if settings.comets_enabled:
         scheduler.add_job(
@@ -192,21 +208,21 @@ def start_scheduler() -> None:
             "interval",
             hours=settings.comet_refresh_hours,
             id="comet_refresh",
-            next_run_time=datetime.now(),
+            next_run_time=_at_boot(),
         )
     scheduler.add_job(
         run_photo_index,
         "interval",
         minutes=settings.photo_index_interval_minutes,
         id="photo_index",
-        next_run_time=datetime.now(),
+        next_run_time=_at_boot(),
     )
     scheduler.add_job(
         run_weather_refresh,
         "interval",
         minutes=settings.weather_cache_minutes,
         id="weather_refresh",
-        next_run_time=datetime.now(),
+        next_run_time=_at_boot(),
     )
     scheduler.start()
 
