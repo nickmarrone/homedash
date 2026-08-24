@@ -10,7 +10,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import routes as routes_module
+from app.api import deps as api_deps
+from app.api.routes import weather as weather_routes
 from app.api.routes import router
 from app.config import Settings
 from app.db import get_session
@@ -20,7 +21,7 @@ from app.models import CalendarSource, Event, EventInstance
 @pytest.fixture
 def client(session, monkeypatch):
     monkeypatch.setattr(
-        routes_module,
+        api_deps,
         "settings",
         Settings(_env_file=None, home_timezone="America/New_York", week_starts_on="sunday"),
     )
@@ -212,7 +213,7 @@ class TestLookaheadViews:
 class TestWeekStart:
     def test_monday_start_shifts_the_grid(self, client, monkeypatch):
         monkeypatch.setattr(
-            routes_module,
+            api_deps,
             "settings",
             Settings(_env_file=None, home_timezone="America/New_York", week_starts_on="monday"),
         )
@@ -230,7 +231,7 @@ class TestWeatherEndpoint:
         weather cache should still leave a populated astro block - otherwise a
         failed fetch looks like a broken panel rather than a missing forecast.
         """
-        monkeypatch.setattr(routes_module, "get_cached_weather", lambda: None)
+        monkeypatch.setattr(weather_routes, "get_cached_weather", lambda: None)
 
         payload = client.get("/api/weather").json()
 
@@ -240,7 +241,7 @@ class TestWeatherEndpoint:
 
     def test_the_cache_is_passed_through_alongside_it(self, client, monkeypatch):
         monkeypatch.setattr(
-            routes_module, "get_cached_weather", lambda: {"current": {"temperature_2m": 71.0}}
+            weather_routes, "get_cached_weather", lambda: {"current": {"temperature_2m": 71.0}}
         )
 
         payload = client.get("/api/weather").json()

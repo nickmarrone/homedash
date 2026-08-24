@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import asyncio
 
-from app.api import routes as routes_module
+from app.api.routes import music as routes_module
 from app.api.routes import router
 from app.music.base import Album, Artist, Track
 from app.music.heos import HeosController
@@ -118,14 +118,32 @@ def test_every_supported_transport_action_is_accepted(action):
         monkey.undo()
 
 
-@pytest.mark.parametrize("body", [{}, {"action": ""}, {"action": "eject"}, {"action": 3}])
-def test_an_unsupported_transport_action_is_rejected_before_the_speaker_sees_it(body):
-    """The allowed set is closed at the route rather than passed through, so a
-    typo cannot reach the speaker as an unrecognised HEOS command."""
+@pytest.mark.parametrize(
+    "body,status",
+    [
+        # Malformed body: the schema rejects it and names the field. 422.
+        ({}, 422),
+        ({"action": 3}, 422),
+        # Well-formed, but not an action this speaker has. The route's own
+        # closed set answers those, so it stays a 400.
+        ({"action": ""}, 400),
+        ({"action": "eject"}, 400),
+    ],
+)
+def test_an_unsupported_transport_action_is_rejected_before_the_speaker_sees_it(body, status):
+    """The allowed set is closed before the command is sent, so a typo cannot
+    reach the speaker as an unrecognised HEOS command.
+
+    Two ways to be rejected, and they are worth telling apart. A body that is
+    not the right shape fails the schema, which answers 422 saying which field
+    and why. A body that is the right shape but names an action that does not
+    exist is a domain question the schema cannot answer, and stays a 400
+    listing what there is. These used to all be hand-rolled 400s.
+    """
     controller, heos = connected_controller()
     client, monkey = make_client(controller=controller)
     try:
-        assert client.post("/api/music/players/1/transport", json=body).status_code == 400
+        assert client.post("/api/music/players/1/transport", json=body).status_code == status
         assert heos.players[1].calls == []
     finally:
         monkey.undo()
@@ -160,12 +178,16 @@ def test_an_out_of_range_or_wrongly_typed_volume_never_reaches_the_speaker(level
     out about it in a kitchen at 6am.
 
     `True` is in this list on purpose: bool is a subclass of int in Python, so
-    a naive range check accepts it and sets the volume to 1.
+    a naive range check accepts it and sets the volume to 1. `"40"` likewise -
+    the field is strict, so a string that looks like a number is not one.
+
+    422 rather than the hand-written 400 this replaced: the schema knows which
+    field was wrong and what it wanted, and says so.
     """
     controller, heos = connected_controller()
     client, monkey = make_client(controller=controller)
     try:
-        assert client.post("/api/music/players/1/volume", json={"level": level}).status_code == 400
+        assert client.post("/api/music/players/1/volume", json={"level": level}).status_code == 422
         assert heos.players[1].calls == []
     finally:
         monkey.undo()

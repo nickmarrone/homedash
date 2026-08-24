@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import routes as routes_module
+from app.api import deps as api_deps
 from app.api.routes import router
 from app.config import ScreenScheduleConfig, Settings
 from app.db import get_session
@@ -50,7 +50,7 @@ def device(session) -> Device:
 @pytest.fixture
 def client(session, monkeypatch):
     monkeypatch.setattr(
-        routes_module,
+        api_deps,
         "settings",
         Settings(_env_file=None, home_timezone="America/New_York"),
     )

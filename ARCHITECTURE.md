@@ -41,8 +41,9 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `scheduler.py` | APScheduler jobs: calendar syncs, heartbeat, weather, comets, photo index |
 | `sse.py` | `SSEBroadcaster` fan-out to connected panels |
 | `devices.py` | Screen-schedule arithmetic and the device row reconciler |
-| `api/routes.py` | Every HTTP endpoint, on one `APIRouter` |
-| `api/serializers.py` | `serialize_instance` — the shared event wire shape, plus each view's own extras |
+| `api/routes/` | Every HTTP endpoint, one router per subject, assembled in `__init__` |
+| `api/deps.py` | `settings` and `SessionDep` — the one config seam every router shares |
+| `api/serializers.py` | `serialize_instance` and `serialize_now_playing` — the wire shapes |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
 | `music/` | The HEOS connection and the speakers the panel controls |
@@ -177,7 +178,7 @@ files, so per-row unlinking would blank the surviving copy.
 |---|---|
 | `base.py` | `MusicLibrary` protocol and the `Artist`/`Album`/`Track` shapes |
 | `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
-| `jellyfin.py` | `JellyfinLibrary`: browse three levels, and where the audio lives |
+| `jellyfin.py` | `JellyfinLibrary`: browse three levels, and fetch the art and audio |
 | `tokens.py` | Short opaque stream tokens, and the 255-character check |
 | `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the stop that ends it |
 | `service.py` | The process-wide singletons, and the switches that decide they exist |
@@ -621,6 +622,32 @@ single-calendar panel, where the legend renders nothing at all.
 | `NowPlaying.svelte` | Art, title, artist, album, progress |
 | `TransportControls.svelte` | Play/pause/skip/stop, inline SVG, compact and full |
 | `PlayerPicker.svelte` | Which speaker; renders nothing for a one-speaker household |
+
+### `api/routes/`
+
+| Module | Endpoints |
+|---|---|
+| `system.py` | `/healthz`, the SSE stream, the device screen schedule |
+| `calendar.py` | `/api/agenda`, `/api/calendar`, `/api/calendars` |
+| `weather.py` | `/api/weather` |
+| `photos.py` | The screensaver playlist and its derivatives |
+| `music.py` | Speakers, the library, the art and audio proxies |
+
+This was one 749-line module. The split is by what an endpoint is *about*; paths are
+unchanged and `main.py` still imports a single `router`.
+
+Two things left rather than moved sideways, because they were another layer's work:
+the Jellyfin proxies are now `JellyfinLibrary.art()` and `.open_stream()` — a route should
+turn a call into a status, not hold an httpx client open across a streaming response — and
+the now-playing wire shape is in `api/serializers.py` beside the event one.
+
+**Settings live in `api/deps.py`, not per router.** Five module-level `settings` globals
+would mean a test had to know which router file an endpoint happened to land in. Reference it
+as `deps.settings`; `from app.api.deps import settings` binds a copy and defeats the patch.
+
+**Request bodies are Pydantic models**, not `dict` picked apart by hand. That moves a
+malformed body to a 422 that names the field, and leaves 400 for what a schema genuinely
+cannot answer — an action that is a string but not one this speaker has.
 
 ### Idioms
 
