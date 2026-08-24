@@ -32,10 +32,10 @@
 	{#each days as day (day.date)}
 		<section class:today={day.is_today} class:past={today !== null && day.date < today}>
 			<h3>
-				<span class="weekday">{day.weekday_short}</span>
+				<span class="caps-sm weekday">{day.weekday_short}</span>
 				<span class="daynum">{day.day_of_month}</span>
 				{#if day.is_today}
-					<span class="flag">Today</span>
+					<span class="caps-sm flag">Today</span>
 				{/if}
 			</h3>
 			{#if day.items.length === 0}
@@ -43,9 +43,10 @@
 			{:else}
 				<ul>
 					{#each day.items as item (item.id)}
+						{@const passed = hasPassed(day.date, item, today, now)}
 						<li
 							style:--item-color={item.calendar?.color ?? 'var(--accent-fallback)'}
-							class:passed={hasPassed(day.date, item, today, now)}
+							class:passed
 						>
 							<span class="bar" aria-hidden="true"></span>
 							<span class="time">
@@ -58,7 +59,7 @@
 									{formatTime(item.starts_at)}
 								{/if}
 							</span>
-							<span class="title">{item.title}</span>
+							<span class="title" class:struck={passed}>{item.title}</span>
 							{#if item.location}
 								<span class="location">{item.location}</span>
 							{/if}
@@ -115,12 +116,9 @@
 		font-weight: 400;
 	}
 
+	/* Layout only; the type is .caps-sm in theme.css. */
 	.weekday {
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		color: var(--ink-muted);
+		display: block;
 	}
 
 	.daynum {
@@ -142,12 +140,10 @@
 		font-weight: 600;
 	}
 
+	/* .caps-sm, but at full ink: this is the word "Today", which is the one
+	   label in the row that is making a claim rather than naming a column. */
 	.flag {
 		margin-left: auto;
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
 		color: var(--ink);
 	}
 
@@ -197,14 +193,6 @@
 	   happened last Tuesday is no less finished than one that ended an hour ago,
 	   and treating the two differently makes the strike look like it means
 	   something else. */
-	.passed .title {
-		color: var(--ink-ghost);
-		font-weight: 400;
-		text-decoration: line-through;
-		text-decoration-color: var(--item-color);
-		text-decoration-thickness: 1px;
-	}
-
 	.passed .time,
 	.passed .location {
 		color: var(--ink-trace);

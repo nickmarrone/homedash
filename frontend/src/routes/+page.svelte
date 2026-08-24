@@ -4,31 +4,24 @@
 		fetchAgenda,
 		fetchCalendarView,
 		fetchCalendars,
-		fetchMusicPlayers,
 		fetchPhotos,
 		fetchWeather,
-		playAlbum,
-		playTracks,
-		sendTransport,
-		setPlayerVolume,
 		subscribeToUpdates,
 		type AgendaCalendar,
 		type AgendaItem,
 		type CalendarView,
 		type CalendarViewName,
 		type Heartbeat,
-		type MusicPlayer,
 		type PhotoPlaylist,
-		type TransportAction,
 		type Weather
 	} from '$lib/api';
 	import { createOrientation } from '$lib/orientation.svelte';
+	import { createMusic } from '$lib/music.svelte';
 	import { startIdleTimer, type IdleTimer } from '$lib/idle';
 	import { startWatchdog } from '$lib/watchdog';
 	import { startBackoff } from '$lib/retry';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
-	import { loadPlayerId, pickPlayer, savePlayerId } from '$lib/musicPreference';
 	import { formatMasthead } from '$lib/format';
 	import AgendaList from '$lib/components/AgendaList.svelte';
 	import Almanac from '$lib/components/Almanac.svelte';
@@ -62,13 +55,10 @@
 	let serverToday = $state<string | null>(null);
 	let serverNow = $state<string | null>(null);
 
-	// Null means this panel has no music configured at all, which is different
-	// from having music whose speakers are asleep - the first hides the UI
-	// permanently, the second shows it with nothing playing.
-	let musicPlayers = $state<MusicPlayer[] | null>(null);
-	let hasLibrary = $state(false);
-	let selectedPlayerId = $state<number | null>(null);
-	let musicOpen = $state(false);
+	// Everything about the speakers, including the commands that change them.
+	// It never touches the calendar, so it lives in its own module rather than
+	// adding a sixth state domain to this one - see lib/music.svelte.ts.
+	const music = createMusic();
 
 	let playlist = $state<PhotoPlaylist | null>(null);
 	let idle = $state(false);
@@ -91,22 +81,6 @@
 	// that should be showing photographs.
 	let screensaverOn = $derived(
 		idle && screenOn && (playlist?.photos.length ?? 0) > 0
-	);
-
-	// Falls back rather than showing nothing when the remembered speaker is
-	// gone: an unplugged or renamed player would otherwise leave the panel with
-	// music controls wired to an id the backend no longer knows.
-	let activePlayer = $derived(pickPlayer(musicPlayers ?? [], selectedPlayerId));
-
-	// The bar shows while there is a track to act on - playing *or* paused. A
-	// household that never uses this never sees it, and the calendar keeps its
-	// full height on every other day.
-	//
-	// Paused counts, and that is not a detail: keying this on 'play' alone made
-	// the bar disappear the instant you paused from it, taking the resume
-	// button with it. Only a stopped speaker has nothing to offer.
-	let musicBarOn = $derived(
-		activePlayer !== null && (activePlayer.state === 'play' || activePlayer.state === 'pause')
 	);
 
 	// Null until the server has told us what day it is. The heartbeat updates
@@ -177,52 +151,6 @@
 		weather = await fetchWeather();
 	}
 
-	async function loadMusic() {
-		const next = await fetchMusicPlayers();
-		musicPlayers = next === null ? null : next.players;
-		hasLibrary = next?.library ?? false;
-	}
-
-	function selectPlayer(id: number) {
-		selectedPlayerId = id;
-		savePlayerId(id);
-	}
-
-	async function runMusicCommand(command: Promise<void>) {
-		try {
-			await command;
-		} catch {
-			// A speaker that has just dropped off wifi must not take the
-			// calendar down with it. The next pushed event or reload corrects
-			// whatever the panel is showing.
-			return;
-		}
-		// HEOS pushes a change event for anything that actually happened, but
-		// refetching immediately closes the window where a tapped button still
-		// renders its old state.
-		loadMusic();
-	}
-
-	function doTransport(action: TransportAction) {
-		if (!activePlayer) return;
-		runMusicCommand(sendTransport(activePlayer.id, action));
-	}
-
-	function doVolume(level: number) {
-		if (!activePlayer) return;
-		runMusicCommand(setPlayerVolume(activePlayer.id, level));
-	}
-
-	function doPlayAlbum(albumId: string) {
-		if (!activePlayer) return;
-		runMusicCommand(playAlbum(activePlayer.id, albumId));
-	}
-
-	function doPlayTracks(trackIds: string[], albumId: string) {
-		if (!activePlayer) return;
-		runMusicCommand(playTracks(activePlayer.id, trackIds, albumId));
-	}
-
 	async function loadPhotos() {
 		const next = await fetchPhotos(orientation.isPortrait ? 'portrait' : 'landscape');
 		playlist = next;
@@ -275,7 +203,7 @@
 			loadCalendars(),
 			loadWeather(),
 			loadPhotos(),
-			loadMusic()
+			music.load()
 		]);
 		const failed = results.filter((r) => r.status === 'rejected');
 		if (failed.length === 0) {
@@ -337,7 +265,6 @@
 	onMount(() => {
 		hiddenCalendars = loadHidden();
 		view = loadView();
-		selectedPlayerId = loadPlayerId();
 		reloadEverything();
 
 		const watchdog = startWatchdog();
@@ -365,7 +292,7 @@
 				}
 				if (eventType === 'weather.updated') guard(loadWeather());
 				if (eventType === 'photos.updated') guard(loadPhotos());
-				if (eventType === 'music.updated') guard(loadMusic());
+				if (eventType === 'music.updated') guard(music.load());
 			}
 		});
 
@@ -432,21 +359,21 @@
 		{/if}
 	{/if}
 
-	{#if musicBarOn && activePlayer}
+	{#if music.barVisible && music.activePlayer}
 		<div class="music-slot">
 			<NowPlayingBar
-				player={activePlayer}
-				onAction={doTransport}
-				onOpen={() => (musicOpen = true)}
+				player={music.activePlayer}
+				onAction={music.transport}
+				onOpen={music.openOverlay}
 			/>
 		</div>
-	{:else if hasLibrary && activePlayer}
+	{:else if music.hasLibrary && music.activePlayer}
 		<!-- With nothing playing there is no bar, so there has to be some other
 		     way in. A single button rather than a permanent strip: the calendar
 		     is what the panel is for, and this is the smallest thing that keeps
 		     the library reachable. -->
 		<div class="music-slot quiet">
-			<button class="open-music" type="button" onclick={() => (musicOpen = true)}>
+			<button class="control-round open-music" type="button" onclick={music.openOverlay}>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path
 						d="M9 18V6l10-2v12"
@@ -465,17 +392,17 @@
 	{/if}
 </main>
 
-{#if musicOpen && activePlayer}
+{#if music.overlayOpen && music.activePlayer}
 	<MusicOverlay
-		players={musicPlayers ?? []}
-		player={activePlayer}
-		{hasLibrary}
-		onSelectPlayer={selectPlayer}
-		onAction={doTransport}
-		onVolume={doVolume}
-		onPlayAlbum={doPlayAlbum}
-		onPlayTracks={doPlayTracks}
-		onClose={() => (musicOpen = false)}
+		players={music.players ?? []}
+		player={music.activePlayer}
+		hasLibrary={music.hasLibrary}
+		onSelectPlayer={music.selectPlayer}
+		onAction={music.transport}
+		onVolume={music.setVolume}
+		onPlayAlbum={music.playAlbum}
+		onPlayTracks={music.playTracks}
+		onClose={music.closeOverlay}
 	/>
 {/if}
 
@@ -485,7 +412,9 @@
 	     this song" without giving up the family photos. -->
 	<Screensaver
 		{playlist}
-		nowPlaying={activePlayer?.state === 'play' ? (activePlayer.now_playing ?? null) : null}
+		nowPlaying={music.activePlayer?.state === 'play'
+			? (music.activePlayer.now_playing ?? null)
+			: null}
 		onDismiss={dismissScreensaver}
 	/>
 {/if}
@@ -574,20 +503,12 @@
 		justify-content: flex-end;
 	}
 
+	/* .control-round, but a pill rather than a circle: this one carries a word
+	   as well as a glyph, so it needs width and a gap between them. */
 	.open-music {
-		display: flex;
-		align-items: center;
 		gap: 0.5rem;
-		min-height: var(--tap);
 		padding: 0 1.25rem;
-		border: 1px solid var(--rule-strong);
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--ink-soft);
 		font: inherit;
-		cursor: pointer;
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
 	}
 
 	.open-music svg {
@@ -595,9 +516,6 @@
 		height: 22px;
 	}
 
-	.open-music:active {
-		transform: scale(0.97);
-	}
 
 	.upcoming {
 		margin-top: 1.75rem;

@@ -195,7 +195,7 @@
 <div class="browser">
 	<header>
 		{#if history.length > 0}
-			<button class="back" type="button" onclick={back} aria-label="Back">
+			<button class="control-round back" type="button" onclick={back} aria-label="Back">
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path
 						d="M15 5l-7 7 7 7"
@@ -319,18 +319,8 @@
 		white-space: nowrap;
 	}
 
-	/* Outlined, like every other round control on the panel. */
 	.back {
-		display: grid;
-		place-items: center;
-		min-width: var(--tap);
-		min-height: var(--tap);
 		flex: none;
-		border: 1px solid var(--rule-strong);
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--ink-soft);
-		cursor: pointer;
 	}
 
 	.back svg {

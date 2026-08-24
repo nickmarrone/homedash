@@ -188,3 +188,106 @@ body {
 	text-transform: uppercase;
 	color: var(--ink-muted);
 }
+
+/* The same run one step down. The weekday headers in both grid views and the
+   day-column flags are set at 0.75rem rather than 0.8125, and all three had
+   written the five declarations out privately - which is exactly what the note
+   above says a design layer exists to prevent, and they had already started to
+   drift on colour. */
+.caps-sm {
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: var(--ink-muted);
+}
+
+/* An appointment that is over.
+ *
+ * Struck in its own calendar's colour, and dropped to the faintest ink that is
+ * still text. It used to be opacity, which on a ruled table stopped reading as
+ * "finished" and started reading as "faint" - and fading an accent changes its
+ * hue as well as its weight, so "over" and "not this month" ended up looking
+ * like the same state.
+ *
+ * Applied where the strike goes rather than to the whole row: the agenda and
+ * the day columns strike the title and leave the time legible beside it, while
+ * a month chip is only a title, so it is struck itself. The three of them had a
+ * copy each and were already diverging on which custom property carried the
+ * colour. `--item-color` is now that property everywhere. */
+.struck {
+	color: var(--ink-ghost);
+	font-weight: 400;
+	text-decoration: line-through;
+	text-decoration-color: var(--item-color, var(--accent-fallback));
+	text-decoration-thickness: 1px;
+}
+
+/* Every button on the panel is a touch target first.
+ *
+ * `touch-action: manipulation` turns off the double-tap-to-zoom delay,
+ * `-webkit-tap-highlight-color` removes the grey flash Chromium paints on tap,
+ * and the press feedback is a scale because hover does not exist here. These
+ * were repeated in ten component stylesheets with three different scale values.
+ *
+ * The focus ring is here for a better reason than tidiness: eight button groups
+ * defined it and two did not, which is the sort of gap that only ever gets
+ * closed by moving the rule somewhere it cannot be forgotten. Svelte's scoped
+ * selectors carry a class and so outrank these, which means a component that
+ * really does want something different still can. */
+button {
+	touch-action: manipulation;
+	-webkit-tap-highlight-color: transparent;
+}
+
+button:active {
+	transform: scale(0.97);
+}
+
+button:focus-visible {
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
+}
+
+/* A round outlined control: the period chevrons, transport, close, back, and
+   the button that opens the music. Five copies of the same eleven declarations,
+   two of which carried a comment saying "like every other round control on the
+   panel" - which is the tell. */
+.control-round {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--tap);
+	min-height: var(--tap);
+	padding: 0;
+	border: 1px solid var(--rule-strong);
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--ink-soft);
+	cursor: pointer;
+}
+
+/* A tab in an underlined row: the view switcher, the music overlay's two
+   screens, and the speaker picker. The selected one is marked once, by a rule
+   under it in ink - the panel's single way of saying "this one". The three
+   copies had already drifted apart on padding. */
+.tab {
+	min-height: var(--tap);
+	padding: 0 0.9rem;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--ink-muted);
+	font-family: var(--font-body);
+	/* All three copies already agreed on this; only the padding had drifted. */
+	font-size: 1.0625rem;
+	cursor: pointer;
+}
+
+.tab[aria-pressed='true'],
+.tab[aria-selected='true'],
+.tab.selected {
+	color: var(--ink);
+	font-weight: 600;
+	border-bottom-color: var(--ink);
+}

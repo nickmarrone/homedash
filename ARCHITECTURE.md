@@ -594,6 +594,7 @@ single-calendar panel, where the legend renders nothing at all.
 | `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
+| `music.svelte.ts` | The speakers, the selected one, and the commands that change them |
 | `calendarVisibility.ts` | localStorage set of hidden calendar ids |
 | `musicPreference.ts` | localStorage of the controlled speaker, and the fallback when it is gone |
 | `viewPreference.ts` | localStorage of the last-selected view |
@@ -688,7 +689,24 @@ Components keep their layout and nothing else, so the panel can be re-skinned fr
 | `--font-display`, `--font-body` | Newsreader and Figtree |
 | `--tap`, `--radius-pill`, `--radius-sm` | 48px, and the two radii the direction keeps |
 
-**`.caps` is the one global utility class.** Small, bold, letterspaced, upper, muted — the
+**Five global classes, and they are the whole of the shared design.** `.caps` and `.caps-sm`
+are the section label at its two sizes; `.struck` is what a finished appointment looks like;
+`.tab` is an underlined tab; `.control-round` is an outlined round control. Plus bare
+`button` rules for the touch behaviour and the focus ring that every button needs.
+
+They exist because the components had written them out privately — `.passed` three times,
+the small caps run three times, the tab three times, the round control five times — and had
+already begun to drift: two different custom properties carrying the calendar's colour, two
+different paddings on the same tab, and a focus ring on eight button groups but not the other
+two. That last one is the argument in miniature: a rule that lives in ten places is a rule
+that will be missing from one of them.
+
+Svelte scopes component styles, so a scoped selector outranks these and a component that
+genuinely wants something different still can — `PlayerPicker` keeps tighter tab padding,
+`.open-music` is a pill rather than a circle. The difference is that those are now one line
+each, and visible as deliberate.
+
+**`.caps` in particular.** Small, bold, letterspaced, upper, muted — the
 direction's section label, used in the masthead, the agenda, both music screens and the
 now-playing strip. Six private copies would drift, which is the thing a design layer exists
 to prevent. It is global because Svelte scopes component styles to their own markup.

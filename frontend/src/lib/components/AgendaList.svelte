@@ -59,13 +59,17 @@
 			{:else}
 				<ul>
 					{#each group.items as item (item.id)}
+						{@const passed = hasPassed(group.key, item, today, now)}
 						<li
 							style:--item-color={item.calendar?.color ?? 'var(--accent-fallback)'}
-							class:passed={hasPassed(group.key, item, today, now)}
+							class:passed
 						>
 							<span class="bar" aria-hidden="true"></span>
 							<span class="time">{item.all_day ? 'All day' : formatTime(item.starts_at)}</span>
-							<span class="title">{item.title}</span>
+							<!-- .struck is the shared "this is over" treatment; the time
+							     beside it stays legible, which is why it goes here and not
+							     on the row. -->
+							<span class="title" class:struck={passed}>{item.title}</span>
 							{#if item.location}
 								<span class="location">{item.location}</span>
 							{/if}
@@ -127,14 +131,6 @@
 	   mark it. In portrait the agenda sits directly under the calendar, so the
 	   same appointment is on screen twice - showing it struck through in one
 	   place and at full strength in the other reads as a bug. */
-	.passed .title {
-		color: var(--ink-ghost);
-		font-weight: 400;
-		text-decoration: line-through;
-		text-decoration-color: var(--item-color);
-		text-decoration-thickness: 1px;
-	}
-
 	.passed .time,
 	.passed .location {
 		color: var(--ink-trace);

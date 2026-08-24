@@ -131,12 +131,14 @@
 			<nav class="tabs" aria-label="Music">
 				<button
 					type="button"
+					class="tab"
 					class:selected={tab === 'now'}
 					aria-pressed={tab === 'now'}
 					onclick={() => (chosenTab = 'now')}>Now Playing</button
 				>
 				<button
 					type="button"
+					class="tab"
 					class:selected={tab === 'browse'}
 					aria-pressed={tab === 'browse'}
 					onclick={() => (chosenTab = 'browse')}>Library</button
@@ -147,7 +149,7 @@
 			<span class="divider" aria-hidden="true"></span>
 		{/if}
 		<PlayerPicker {players} selectedId={player.id} onSelect={onSelectPlayer} />
-		<button class="close" type="button" onclick={onClose} aria-label="Close music">
+		<button class="control-round close" type="button" onclick={onClose} aria-label="Close music">
 			<svg viewBox="0 0 24 24" aria-hidden="true">
 				<path
 					d="M6 6l12 12M18 6L6 18"
@@ -228,30 +230,6 @@
 
 	/* Underlined, like the view switcher: opening the music does not change how
 	   a selected thing looks. */
-	.tabs button {
-		min-height: var(--tap);
-		padding: 0 0.9rem;
-		border: none;
-		border-bottom: 2px solid transparent;
-		background: transparent;
-		color: var(--ink-muted);
-		font: inherit;
-		font-size: 1.0625rem;
-		cursor: pointer;
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	.tabs .selected {
-		color: var(--ink);
-		font-weight: 600;
-		border-bottom-color: var(--ink);
-	}
-
-	.tabs button:active {
-		transform: scale(0.97);
-	}
-
 	.browse {
 		flex: 1;
 		min-height: 0;
@@ -264,21 +242,10 @@
 	}
 
 	.close {
-		display: grid;
-		place-items: center;
-		min-width: var(--tap);
-		min-height: var(--tap);
 		/* Pushed right on its own rather than by justify-content, so it still
 		   sits against the edge when the picker renders nothing at all - which
 		   it does for a one-speaker household. */
 		margin-left: auto;
-		border: 1px solid var(--rule-strong);
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--ink-soft);
-		cursor: pointer;
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
 	}
 
 	.close svg {
