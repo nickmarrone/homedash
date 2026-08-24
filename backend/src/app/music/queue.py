@@ -17,6 +17,15 @@ State lives in this process, like the weather cache and the token store. A
 restart therefore stops the music after the current track. Acceptable for a
 wall panel, but it should be stated rather than discovered.
 
+**The speaker has a queue of its own, and `play_url` writes to it.** That is
+not what it looks like: `browse/play_stream` reads as "play this URL", but it
+appends a queue entry and plays that entry. Sending one track at a time
+therefore leaves one dead HomeDash URL in the speaker per track, and a finished
+album used to leave the speaker unable to play anything from any source,
+because whatever came next landed on top of them. So this module also tidies:
+it prunes the speaker's queue to the entry playing whenever a track starts, and
+empties it at every one of the three ends an album has - see `_end`.
+
 **Everything that touches one speaker's queue is serialized** - see `_lock`.
 That is not defensive tidiness: pyheos dispatches every pushed event as its own
 task, so a track ending and a finger on a new album genuinely do run at the
@@ -70,8 +79,14 @@ class QueueManager:
 
     play_url: Callable[[int, str], Awaitable[None]]
     url_for: Callable[[Track], str]
-    # Only used to end an album that has been skipped past. See `next`.
+    # Used to end an album, both when it is skipped past and when the panel
+    # asks for silence. See `next` and `stop_and_release`.
     stop_player: Callable[[int], Awaitable[None]] | None = None
+    # The speaker's *own* queue, which is a different thing from this one and
+    # the reason a finished album used to leave the speaker unusable. See
+    # `_end` and the `play` branch of `on_state`.
+    clear_speaker_queue: Callable[[int], Awaitable[None]] | None = None
+    prune_speaker_queue: Callable[[int], Awaitable[None]] | None = None
     queues: dict[int, PlayerQueue] = field(default_factory=dict)
     # One lock per speaker, created on demand. Two speakers must never wait on
     # each other: a stalled command to one would otherwise hold up the album
@@ -150,27 +165,64 @@ class QueueManager:
 
         Synchronous, and therefore *not* serialized: it is safe to call while
         holding the lock, which the queue's own paths do. A caller outside
-        this class wants `stop`.
+        this class wants `stop_and_release`, which also hands the speaker back.
         """
         self.queues.pop(player_id, None)
 
-    async def stop(self, player_id: int) -> None:
-        """Forget the queue, once any track change already in flight is done.
+    async def stop_and_release(self, player_id: int) -> bool:
+        """Stop this speaker and hand it back. False if it has no queue here.
 
-        The serialized form of `clear`, and the one the transport route uses.
-        Clearing without the lock would drop the queue while the previous
-        track's successor was still on its way to the speaker, so the music
-        would stop and then start again on a track nobody asked for.
+        The transport route's `stop`, and it does the whole of it now: pressing
+        stop has to leave the speaker as usable as it was before HomeDash
+        touched it, which means emptying the queue `play_url` filled - see
+        `_end`. False falls the route through to HEOS's own stop, which is
+        right for a speaker playing from one of its own sources.
+
+        Serialized, and that is not incidental. Clearing without the lock would
+        drop the queue while the previous track's successor was still on its
+        way to the speaker, so the music would stop and then start again on a
+        track nobody asked for. Within the lock the local queue goes first and
+        the command second, for the reason that used to be written in the
+        route: the speaker reports a deliberate stop and a finished track
+        identically, so the queue has to be gone before that event arrives.
         """
         async with self._lock(player_id):
-            self.clear(player_id)
+            if self.queues.get(player_id) is None:
+                return False
+            await self._end(player_id, stop_speaker=True)
+            return self.stop_player is not None
+
+    async def _end(self, player_id: int, *, stop_speaker: bool) -> None:
+        """End a queue and give the speaker back. Called with the lock held.
+
+        The one place an album stops, reached three ways: the last track
+        finishing, a skip off the end, and the panel's stop button. They differ
+        only in whether the speaker still needs telling - it has already
+        stopped itself in the first case - and they used to differ in far more
+        than that, which is how the cleanup came to be missing from two of them.
+
+        **Clearing the speaker's own queue is the point.** `play_url` appends
+        to it, so an album leaves one entry per track behind, each pointing at
+        a HomeDash stream URL that has already been served. Left there they are
+        what the speaker resumes into: the HEOS app, another source, or
+        HomeDash's own next album all start on top of a list of dead URLs, and
+        the speaker behaves as though it has a mind of its own.
+        """
+        self.clear(player_id)
+        if stop_speaker and self.stop_player is not None:
+            await self.stop_player(player_id)
+        if self.clear_speaker_queue is not None:
+            await self.clear_speaker_queue(player_id)
 
     async def next(self, player_id: int) -> bool:
         """Skip forward. Returns False when this speaker has no HomeDash queue.
 
         Skipping has to go through here rather than through HEOS's own
-        `play_next`: content sent as a URL never enters the speaker's queue, so
-        its next-track command has nothing to move to and does nothing at all.
+        `play_next`, which has nothing to move to and does nothing at all: the
+        entry `play_url` appends is always the last one in the speaker's queue.
+        (This module used to say the URL never entered that queue at all. It
+        does - see the note at the top - and believing otherwise is what left
+        finished albums sitting in the speaker.)
         """
         async with self._lock(player_id):
             queue = self.queues.get(player_id)
@@ -178,8 +230,8 @@ class QueueManager:
                 return False
             if queue.remaining == 0:
                 # Skipping past the last track ends the album, and the speaker
-                # has to be told: content sent as a URL is still playing right
-                # now. Dropping the queue alone left the music running while
+                # has to be told: the last track is still playing right now.
+                # Dropping the queue alone left the music running while
                 # the panel's queue display vanished and now-playing reverted
                 # to the speaker's own bitrate-and-codec description of the
                 # stream - a stop button's job done by the skip button, badly.
@@ -187,9 +239,7 @@ class QueueManager:
                 # `on_state` hits this same branch and must *not* stop
                 # anything, because there the track has genuinely ended and the
                 # speaker stopped by itself.
-                self.clear(player_id)
-                if self.stop_player is not None:
-                    await self.stop_player(player_id)
+                await self._end(player_id, stop_speaker=True)
                 return True
             queue.index += 1
             await self._play_current(player_id)
@@ -233,6 +283,19 @@ class QueueManager:
                 return
             if state == "play":
                 queue.awaiting_start = False
+                # The earliest moment the speaker can say which of its own
+                # queue entries it is on, and therefore the earliest moment the
+                # rest of them can safely go. Doing it here rather than after
+                # `play_url` is what keeps the speaker's queue at one entry for
+                # the length of an album instead of one per track - and it
+                # sweeps up whatever an older HomeDash left behind, so a
+                # confused speaker fixes itself on the next thing it plays.
+                #
+                # After `awaiting_start`, never before: a prune that fails must
+                # not leave the queue unable to tell a finished track from the
+                # gap before one, which would stall the album for good.
+                if self.prune_speaker_queue is not None:
+                    await self.prune_speaker_queue(player_id)
                 return
             # Only `play` counts as having started. A `pause` or an `unknown`
             # arriving before the stream opens says nothing about whether the
@@ -242,7 +305,10 @@ class QueueManager:
             if queue.awaiting_start:
                 return
             if queue.remaining == 0:
-                self.clear(player_id)
+                # The album is over and the speaker stopped itself, so there is
+                # nothing to send it - but its queue still holds the entry
+                # `play_url` put there, and this is the moment it goes.
+                await self._end(player_id, stop_speaker=False)
                 return
             queue.index += 1
             await self._play_current(player_id)

@@ -241,13 +241,43 @@ class FakeLibrary:
         return list(self._tracks)
 
 
-def queue_manager():
+def queue_manager(controller=None):
+    """A queue that records the URLs it sent, optionally driving a speaker.
+
+    Without a controller it records and nothing else, which is what most of
+    these tests want - and it is also the honest shape of a half-wired manager,
+    so the routes are exercised against one that cannot stop a speaker.
+
+    With one, it is wired the way `music/service.py` wires the real thing,
+    including the two callables that tidy the speaker's own queue. That is the
+    only way to test the thing the panel's stop button is actually for: leaving
+    the speakers usable by something other than HomeDash.
+    """
     played = []
 
     async def play_url(player_id, url):
         played.append((player_id, url))
+        if controller is not None:
+            await controller.play_url(player_id, url)
 
-    return QueueManager(play_url=play_url, url_for=lambda t: f"http://h/{t.id}"), played
+    manager = QueueManager(play_url=play_url, url_for=lambda t: f"http://h/{t.id}")
+    if controller is not None:
+
+        async def stop_player(player_id):
+            await controller.transport(player_id, "stop")
+
+        async def clear_speaker_queue(player_id):
+            # Swallowed, as in `music/service.py`: HEOS errors on an empty
+            # queue and that must not fail a stop somebody asked for.
+            try:
+                await controller.clear_queue(player_id)
+            except Exception:
+                pass
+
+        manager.stop_player = stop_player
+        manager.clear_speaker_queue = clear_speaker_queue
+        manager.prune_speaker_queue = controller.prune_queue
+    return manager, played
 
 
 def test_browsing_without_a_library_configured_is_503():
@@ -651,3 +681,83 @@ class TestASpeakerThatHasGoneAway:
             monkey.undo()
 
         assert response.status_code == 404
+
+
+class TestTheSpeakerIsLeftUsable:
+    """End to end, through the route, with the speaker's own queue in play.
+
+    Everything above this uses a queue manager that only records - which is
+    right for testing the routes, and is exactly why the bug survived: the
+    speaker's queue was not in the picture anywhere. `play_url` appends to it,
+    so an album leaves one entry per track behind and the speaker will not play
+    anything else until they are gone.
+    """
+
+    def test_an_album_played_to_the_end_leaves_nothing_behind(self):
+        controller, heos = connected_controller()
+        queues, _ = queue_manager(controller)
+        client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+        try:
+            client.post("/api/music/players/1/play", json={"album_id": "b1"})
+            for _ in range(2):  # FakeLibrary's album is two tracks
+                run_(queues.on_state(1, "play"))
+                run_(queues.on_state(1, "stop"))
+
+            assert heos.players[1].queue == []
+            assert 1 not in queues.queues
+        finally:
+            monkey.undo()
+
+    def test_the_speakers_queue_never_grows_past_the_track_playing(self):
+        """The other half: not merely tidied at the end, but never allowed to
+        accumulate. An album left mid-way through has one entry, not six."""
+        controller, heos = connected_controller()
+        queues, _ = queue_manager(controller)
+        client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+        try:
+            client.post("/api/music/players/1/play", json={"album_id": "b1"})
+            run_(queues.on_state(1, "play"))
+            run_(queues.on_state(1, "stop"))  # on to track two
+            run_(queues.on_state(1, "play"))
+
+            assert len(heos.players[1].queue) == 1
+        finally:
+            monkey.undo()
+
+    def test_stopping_from_the_panel_empties_the_speakers_queue(self):
+        controller, heos = connected_controller()
+        queues, _ = queue_manager(controller)
+        client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+        try:
+            client.post("/api/music/players/1/play", json={"album_id": "b1"})
+            run_(queues.on_state(1, "play"))
+
+            response = client.post(
+                "/api/music/players/1/transport", json={"action": "stop"}
+            )
+
+            assert response.status_code == 200
+            assert heos.players[1].queue == []
+            assert ("stop",) in heos.players[1].calls
+        finally:
+            monkey.undo()
+
+    def test_a_speaker_left_confused_by_an_older_build_fixes_itself(self):
+        """The upgrade path, and the reason pruning is not just a growth guard.
+
+        A speaker that already holds a stack of dead URLs is cleaned out by the
+        next thing HomeDash plays on it, so nobody has to go and find the
+        probe's --clear-queue to get their kitchen back.
+        """
+        controller, heos = connected_controller()
+        for stale in range(5):
+            run_(controller.play_url(1, f"http://old/api/music/s/{stale}"))
+        queues, _ = queue_manager(controller)
+        client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+        try:
+            client.post("/api/music/players/1/play", json={"album_id": "b1"})
+            run_(queues.on_state(1, "play"))
+
+            assert [item.song for item in heos.players[1].queue] == ["http://h/t1"]
+        finally:
+            monkey.undo()

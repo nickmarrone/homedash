@@ -306,13 +306,15 @@ async def post_music_transport(player_id: int, body: TransportRequest) -> dict:
             if handled:
                 return {"ok": True}
         if queues is not None and body.action == "stop":
-            # Before the command, not after: the speaker reports a finished
-            # track and a deliberate stop identically, so the queue has to be
-            # gone before the resulting `stop` event arrives or it would
-            # helpfully start the next track on somebody who asked for silence.
-            # `stop` rather than `clear` so that a track change already on its
-            # way to the speaker finishes first - see app/music/queue.py.
-            await queues.stop(player_id)
+            # Handled entirely by the queue when there is one, the same way a
+            # skip is, because stopping is more than a command now: the
+            # speaker's own queue holds whatever `play_url` appended to it and
+            # has to be emptied, or the next thing anyone plays - from the HEOS
+            # app or from here - starts on top of dead HomeDash URLs. The
+            # ordering that used to live in this route lives there too, since
+            # only the queue can hold its lock across all of it.
+            if await queues.stop_and_release(player_id):
+                return {"ok": True}
         await controller.transport(player_id, body.action)
     except (KeyError, MusicUnavailable, HeosError) as exc:
         raise _speaker_command_failed(exc, player_id) from None

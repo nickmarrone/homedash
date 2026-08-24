@@ -324,7 +324,7 @@ def test_stopping_waits_for_a_track_change_already_on_its_way():
 
         ending = asyncio.create_task(manager.on_state(1, "stop"))
         await asyncio.sleep(0)
-        stopping = asyncio.create_task(manager.stop(1))
+        stopping = asyncio.create_task(manager.stop_and_release(1))
         await asyncio.sleep(0)
         assert 1 in manager.queues  # not cleared until the send finishes
 
@@ -420,3 +420,185 @@ class TestSkippingPastTheEnd:
 
         assert stopped == []
         assert manager.current(1) is None
+
+
+class TestGivingTheSpeakerBack:
+    """The speaker keeps a queue of its own, and `play_url` writes to it.
+
+    This is the thing the feature shipped believing the opposite of. HEOS's
+    `browse/play_stream` does not merely play a URL - it appends it to the
+    player's queue and plays that entry, so an album leaves one entry per track
+    behind, each pointing at a HomeDash stream that has already been served and
+    a token that will eventually stop resolving. Nothing took them out again.
+
+    Heard in the kitchen: an album finishes, and from then on the speaker will
+    not play - not from the panel, not from the HEOS app, not from anything -
+    because whatever it is asked for lands on top of a stack of dead URLs.
+
+    `play_next` doing nothing is the same fact seen from the other side, and it
+    is what made the wrong conclusion look confirmed: the entry HomeDash just
+    appended is always the *last* one, so there is never anything after it to
+    skip to.
+    """
+
+    def build_speaker(self):
+        """A manager wired to a recorder that keeps every call in order.
+
+        One list rather than a list per verb, because most of what is worth
+        asserting here is ordering - a queue cleared before the stop it was
+        meant to follow is a different bug from one that is never cleared.
+        """
+        events: list[tuple] = []
+
+        async def play_url(player_id, url):
+            events.append(("play_url", url))
+
+        async def stop_player(player_id):
+            events.append(("stop_speaker",))
+
+        async def clear_speaker_queue(player_id):
+            events.append(("clear_speaker_queue",))
+
+        async def prune_speaker_queue(player_id):
+            events.append(("prune_speaker_queue",))
+
+        manager = QueueManager(
+            play_url=play_url,
+            url_for=lambda t: f"http://h/{t.id}",
+            stop_player=stop_player,
+            clear_speaker_queue=clear_speaker_queue,
+            prune_speaker_queue=prune_speaker_queue,
+        )
+        return manager, events
+
+    def test_an_album_that_finishes_empties_the_speakers_queue(self):
+        """The reported bug, in one test. The speaker has stopped itself, so
+        there is nothing to send it - but the entry it stopped on is still in
+        its queue, and leaving it there is what makes the speaker unusable."""
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(1)))
+        run(manager.on_state(1, "play"))
+
+        run(manager.on_state(1, "stop"))
+
+        assert ("clear_speaker_queue",) in events
+        assert 1 not in manager.queues
+
+    def test_a_finished_album_is_not_also_sent_a_stop(self):
+        """It stopped by itself. A command issued now would arrive after
+        whatever somebody has started next."""
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(1)))
+        run(manager.on_state(1, "play"))
+
+        run(manager.on_state(1, "stop"))
+
+        assert ("stop_speaker",) not in events
+
+    def test_skipping_off_the_end_stops_the_speaker_and_then_empties_its_queue(self):
+        """Both, and in that order: here the last track is still playing, so
+        the music has to be stopped before the queue it is playing from goes."""
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(1)))
+
+        run(manager.next(1))
+
+        assert events[-2:] == [("stop_speaker",), ("clear_speaker_queue",)]
+
+    def test_the_panels_stop_button_empties_the_speakers_queue_too(self):
+        """The case the question was actually about: after stopping the music
+        from the wall, the speakers have to be usable from anything else."""
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(3)))
+        run(manager.on_state(1, "play"))
+
+        assert run(manager.stop_and_release(1)) is True
+
+        assert events[-2:] == [("stop_speaker",), ("clear_speaker_queue",)]
+        assert 1 not in manager.queues
+
+    def test_stopping_forgets_the_queue_before_telling_the_speaker(self):
+        """The ordering that used to live in the transport route.
+
+        A speaker reports a deliberate stop and a finished track identically,
+        so the queue has to be gone before the command that produces that event
+        goes out - otherwise stopping the music starts the next track.
+        """
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(3)))
+        run(manager.on_state(1, "play"))
+        events.clear()
+
+        run(manager.stop_and_release(1))
+        run(manager.on_state(1, "stop"))
+
+        assert events == [("stop_speaker",), ("clear_speaker_queue",)]
+
+    def test_stopping_a_speaker_with_no_queue_here_is_not_handled(self):
+        """It falls the route through to HEOS's own stop, which is right for a
+        speaker playing from one of its own sources - and means HomeDash never
+        empties a queue it did not fill."""
+        manager, events = self.build_speaker()
+        assert run(manager.stop_and_release(2)) is False
+        assert events == []
+
+    def test_a_track_starting_prunes_the_speakers_queue_to_the_one_playing(self):
+        """What keeps an album from leaving twelve entries behind.
+
+        On `play` and not on `play_url`, because until the speaker says it is
+        playing there is no way to know which entry to keep - and pruning to
+        the wrong one deletes the track that is about to start.
+        """
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(3)))
+        assert ("prune_speaker_queue",) not in events
+
+        run(manager.on_state(1, "play"))
+
+        assert events == [("play_url", "http://h/t1"), ("prune_speaker_queue",)]
+
+    def test_nothing_is_pruned_before_the_speaker_says_it_is_playing(self):
+        """A `pause` or a `stop` says nothing about which entry it is on."""
+        manager, events = self.build_speaker()
+        run(manager.start(1, album(3)))
+
+        run(manager.on_state(1, "pause"))
+        run(manager.on_state(1, "stop"))
+
+        assert ("prune_speaker_queue",) not in events
+
+    def test_a_prune_that_fails_does_not_stall_the_album(self):
+        """`awaiting_start` is cleared first, on purpose.
+
+        Tidying the speaker's queue is best-effort - old firmware need not
+        implement `get_queue` at all - and the failure it must never cause is
+        the queue losing its ability to tell a finished track from the gap
+        before one, which stops the music for good.
+        """
+
+        async def explode(player_id):
+            raise RuntimeError("get_queue not supported")
+
+        manager, events = self.build_speaker()
+        manager.prune_speaker_queue = explode
+        run(manager.start(1, album(3)))
+
+        with pytest.raises(RuntimeError):
+            run(manager.on_state(1, "play"))
+        run(manager.on_state(1, "stop"))
+
+        assert [url for verb, url in events if verb == "play_url"] == [
+            "http://h/t1",
+            "http://h/t2",
+        ]
+
+    def test_a_manager_with_no_speaker_callables_still_works(self):
+        """The transport-only wiring, and every test above this class. Tidying
+        the speaker's queue is something HomeDash gained, not something the
+        queue's own logic depends on."""
+        manager, played = build()
+        run(manager.start(1, album(1)))
+        run(manager.on_state(1, "play"))
+        run(manager.on_state(1, "stop"))
+        assert 1 not in manager.queues
+        assert run(manager.stop_and_release(1)) is False
