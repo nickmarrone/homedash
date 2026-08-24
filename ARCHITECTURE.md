@@ -926,6 +926,15 @@ automatically at startup via `run_migrations()`.
 Alembic silently disables every logger created before it runs — including the app's own,
 which swallows error logs.
 
+`test_migrations.py` is the one place the chain is actually executed. It runs `upgrade head`
+against a throwaway file, checks there is a single head, round-trips down to `base` and back,
+and — the point of it — runs Alembic's own `compare_metadata` against `SQLModel.metadata`. A
+column added to `models.py` with no revision written for it passes every other test in the
+suite, because they all build their schema with `create_all` and never look at a migration;
+it fails here. Note that `env.py` overwrites `sqlalchemy.url` from the settings singleton, so
+steering it at a temp file means setting `HOMEDASH_DB_PATH` *and* clearing
+`get_settings.cache_clear()`.
+
 ### Tests
 
 `backend/tests/`, flat, `test_*.py`. Conventions:
