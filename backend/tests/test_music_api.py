@@ -6,20 +6,21 @@ speakers at all should hide the music UI entirely, while one whose speakers are
 merely asleep should keep it and show nothing playing.
 """
 
+import asyncio
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pyheos import CommandFailedError, ConnectionState
 
-import asyncio
-
-from app.api import routes as routes_module
+from app.api.routes import music as routes_module
 from app.api.routes import router
 from app.music.base import Album, Artist, Track
 from app.music.heos import HeosController
 from app.music.jellyfin import JellyfinError
 from app.music.queue import QueueManager
 from app.music.tokens import TokenStore
-from fake_heos import FakeHeos, FakePlayer
+from fake_heos import FakeHeos
 
 
 def run_(coro):
@@ -109,21 +110,39 @@ def test_every_supported_transport_action_is_accepted(action):
     controller, heos = connected_controller()
     client, monkey = make_client(controller=controller)
     try:
-        response = client.post(f"/api/music/players/1/transport", json={"action": action})
+        response = client.post("/api/music/players/1/transport", json={"action": action})
         assert response.status_code == 200
         assert heos.players[1].calls[0][0] == action
     finally:
         monkey.undo()
 
 
-@pytest.mark.parametrize("body", [{}, {"action": ""}, {"action": "eject"}, {"action": 3}])
-def test_an_unsupported_transport_action_is_rejected_before_the_speaker_sees_it(body):
-    """The allowed set is closed at the route rather than passed through, so a
-    typo cannot reach the speaker as an unrecognised HEOS command."""
+@pytest.mark.parametrize(
+    "body,status",
+    [
+        # Malformed body: the schema rejects it and names the field. 422.
+        ({}, 422),
+        ({"action": 3}, 422),
+        # Well-formed, but not an action this speaker has. The route's own
+        # closed set answers those, so it stays a 400.
+        ({"action": ""}, 400),
+        ({"action": "eject"}, 400),
+    ],
+)
+def test_an_unsupported_transport_action_is_rejected_before_the_speaker_sees_it(body, status):
+    """The allowed set is closed before the command is sent, so a typo cannot
+    reach the speaker as an unrecognised HEOS command.
+
+    Two ways to be rejected, and they are worth telling apart. A body that is
+    not the right shape fails the schema, which answers 422 saying which field
+    and why. A body that is the right shape but names an action that does not
+    exist is a domain question the schema cannot answer, and stays a 400
+    listing what there is. These used to all be hand-rolled 400s.
+    """
     controller, heos = connected_controller()
     client, monkey = make_client(controller=controller)
     try:
-        assert client.post("/api/music/players/1/transport", json=body).status_code == 400
+        assert client.post("/api/music/players/1/transport", json=body).status_code == status
         assert heos.players[1].calls == []
     finally:
         monkey.undo()
@@ -158,12 +177,16 @@ def test_an_out_of_range_or_wrongly_typed_volume_never_reaches_the_speaker(level
     out about it in a kitchen at 6am.
 
     `True` is in this list on purpose: bool is a subclass of int in Python, so
-    a naive range check accepts it and sets the volume to 1.
+    a naive range check accepts it and sets the volume to 1. `"40"` likewise -
+    the field is strict, so a string that looks like a number is not one.
+
+    422 rather than the hand-written 400 this replaced: the schema knows which
+    field was wrong and what it wanted, and says so.
     """
     controller, heos = connected_controller()
     client, monkey = make_client(controller=controller)
     try:
-        assert client.post("/api/music/players/1/volume", json={"level": level}).status_code == 400
+        assert client.post("/api/music/players/1/volume", json={"level": level}).status_code == 422
         assert heos.players[1].calls == []
     finally:
         monkey.undo()
@@ -387,7 +410,7 @@ def test_stopping_clears_the_queue_so_it_does_not_resume_by_itself():
     try:
         client.post("/api/music/players/1/play", json={"album_id": "b1"})
         client.post("/api/music/players/1/transport", json={"action": "stop"})
-        assert queues.has(1) is False
+        assert 1 not in queues.queues
         run_(queues.on_state(1, "stop"))
         assert played == [(1, "http://h/t1")]
     finally:
@@ -484,9 +507,17 @@ def _start_music_with(monkeypatch, **overrides):
     HeosController is replaced wholesale: this is about what start_music
     decides, and building a real one would start an asyncio task looking for a
     speaker that is not there.
+
+    start_music assigns four module globals, so they are restored afterwards.
+    Nothing depends on that today - every route test patches `get_controller`
+    directly - but leaving a _NullController installed process-wide is the kind
+    of residue that makes some future test pass or fail depending on the order
+    pytest happened to collect it in.
     """
     from app.music import service
 
+    for name in ("_controller", "_library", "_tokens", "_queues"):
+        monkeypatch.setattr(service, name, getattr(service, name), raising=False)
     for key, value in overrides.items():
         monkeypatch.setattr(service.settings, key, value)
     monkeypatch.setattr(service, "HeosController", lambda *a, **k: _NullController())
@@ -536,3 +567,87 @@ def test_a_configured_deployment_logs_that_it_is_starting(monkeypatch, caplog):
 
     assert "192.168.4.212" in caplog.text
     assert "transport only" in caplog.text
+
+
+class TestASpeakerThatHasGoneAway:
+    """What the API says when the speakers are not reachable.
+
+    `connected` used to mean "has connected at some point" - pyheos reconnects
+    underneath the controller without ever clearing the handle, so a system
+    that dropped off wifi during the evening went on answering True. The panel
+    switches on exactly that field to decide whether the music UI is healthy,
+    so it kept offering buttons whose commands could only fail - and the
+    failure was a 500 with a stack trace, because the routes caught nothing
+    but KeyError.
+    """
+
+    def test_a_dropped_connection_is_not_reported_as_connected(self):
+        controller, heos = connected_controller()
+        assert controller.connected is True
+
+        heos.connection_state = ConnectionState.DISCONNECTED
+
+        assert controller.connected is False
+
+    def test_reconnecting_is_not_connected_either(self):
+        """It resolves itself within seconds, but until it does a command sent
+        now will not arrive - and that is the question being asked."""
+        controller, heos = connected_controller()
+        heos.connection_state = ConnectionState.RECONNECTING
+
+        assert controller.connected is False
+
+    def test_the_players_endpoint_reports_it_rather_than_erroring(self):
+        """A read stays a 200 while the speakers are away, which is what lets
+        the panel tell 'no speakers right now' from 'no music here at all'."""
+        controller, heos = connected_controller()
+        client, monkey = make_client(controller=controller)
+        heos.connection_state = ConnectionState.DISCONNECTED
+        try:
+            payload = client.get("/api/music/players").json()
+        finally:
+            monkey.undo()
+
+        assert payload["connected"] is False
+
+    def test_a_command_to_an_away_speaker_is_503_not_500(self):
+        """A write does not get to pretend. 503 rather than an unhandled
+        exception, and rather than a 200 the speaker never heard."""
+        controller, heos = connected_controller()
+        client, monkey = make_client(controller=controller)
+        heos.connection_state = ConnectionState.DISCONNECTED
+        try:
+            response = client.post("/api/music/players/1/transport", json={"action": "play"})
+        finally:
+            monkey.undo()
+
+        assert response.status_code == 503
+
+    def test_a_refused_command_is_502(self, monkeypatch):
+        """The speaker is reachable but will not do it - failing firmware, or a
+        verb it does not support. Upstream's fault, so 502; not ours, so not
+        500; not the caller's, so not 4xx."""
+        controller, _ = connected_controller()
+
+        async def refuse(player_id, action):
+            raise CommandFailedError("player/set_play_state", "boom", 1, 2)
+
+        monkeypatch.setattr(controller, "transport", refuse)
+        client, monkey = make_client(controller=controller)
+        try:
+            response = client.post("/api/music/players/1/transport", json={"action": "play"})
+        finally:
+            monkey.undo()
+
+        assert response.status_code == 502
+
+    def test_an_unknown_player_is_still_404(self):
+        """The one failure here that really is the caller's fault."""
+        controller, _ = connected_controller()
+        client, monkey = make_client(controller=controller)
+        try:
+            response = client.post("/api/music/players/99/transport", json={"action": "play"})
+        finally:
+            monkey.undo()
+
+        assert response.status_code == 404

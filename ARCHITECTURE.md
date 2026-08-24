@@ -41,8 +41,9 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `scheduler.py` | APScheduler jobs: calendar syncs, heartbeat, weather, comets, photo index |
 | `sse.py` | `SSEBroadcaster` fan-out to connected panels |
 | `devices.py` | Screen-schedule arithmetic and the device row reconciler |
-| `api/routes.py` | Every HTTP endpoint, on one `APIRouter` |
-| `api/serializers.py` | `serialize_instance` — the shared event wire shape |
+| `api/routes/` | Every HTTP endpoint, one router per subject, assembled in `__init__` |
+| `api/deps.py` | `settings` and `SessionDep` — the one config seam every router shares |
+| `api/serializers.py` | `serialize_instance` and `serialize_now_playing` — the wire shapes |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
 | `music/` | The HEOS connection and the speakers the panel controls |
@@ -62,6 +63,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `google_auth.py` | OAuth refresh-token credentials |
 | `sync.py` | `seed_calendars_from_settings`, `build_adapter`, `sync_source`, `sync_window` |
 | `grid.py` | Day/lookahead/week/month bucketing, anchors, period titles |
+| `queries.py` | `instances_touching` — the one overlap predicate both views read through |
 | `localtime.py` | `to_local` / `as_utc`, all-day floating-datetime handling |
 | `colors.py` | Fixed `PALETTE`, `color_for_index` |
 | `providers.py` | Provider detection for the inspect CLI |
@@ -110,6 +112,40 @@ these — the row survives precisely *because* the rebuild ran:
   wall is still being served — which separates "the calendar still has it" from "this
   row should have been rebuilt away".
 
+**One `events` row per UID, and it holds the master.** A recurring series and every
+`RECURRENCE-ID` override of it share a single UID. Storing a row per VEVENT and keying them
+by UID meant the last component seen won — and that is an override, which carries no RRULE.
+Moving one soccer practice therefore replaced the series' stored VEVENT with that single
+Thursday and orphaned the row holding the actual rule. Nothing on the panel showed it, since
+the expansion has already happened by then; what broke was everything downstream of
+`raw_vevent` — re-expanding the window without re-fetching, which is the only reason the
+column exists, and `homedash-inspect-calendars --find`, which reported `recurring=False` for
+exactly the events somebody would be running it on. `_rows_to_store()` picks the master
+regardless of feed order, and falls back to an override only when the feed offers no master
+at all.
+
+**One overlap predicate, read by both views.** `queries.instances_touching` answers "which
+instances touch these local dates?" for the agenda and the grid alike. It was written twice
+before and the two copies disagreed: the agenda filtered on `starts_at` alone, so an event
+already running when the range opened was dropped from it while the grid still showed it —
+a week-long holiday appeared on the wall on its first morning and then vanished for six
+days. The predicate is subtle enough to be worth centralising because `event_instances`
+holds two kinds of value in one column: a timed row carries a real UTC instant, an all-day
+row carries a *floating* midnight (see `localtime.py`), so every range check is two range
+checks.
+
+`pad_days` is the one knob. The grid passes 1 because `build_days` re-buckets by exact local
+date afterwards and only needs a superset — an instance whose local date is in range can
+carry a UTC instant that is not. The agenda passes 0 and renders what it is given.
+
+**The agenda says which day to file an item under.** Almost always the day it starts, but an
+in-progress event starts in the past and a forward-looking list has no heading for a date
+that has scrolled off it, so `agenda_date` is clamped to today. It is computed server-side
+for the same reason every other date is: the panel must not consult its own clock. This is
+also why `/api/agenda` and `/api/calendar` are *not* byte-identical in shape — they share a
+core and each adds what only it knows (`agenda_date` here, `continues_before`/`_after`
+there).
+
 ### `photos/`
 
 | Module | Responsibility |
@@ -142,9 +178,9 @@ files, so per-row unlinking would blank the surviving copy.
 |---|---|
 | `base.py` | `MusicLibrary` protocol and the `Artist`/`Album`/`Track` shapes |
 | `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
-| `jellyfin.py` | `JellyfinLibrary`: browse three levels, and where the audio lives |
+| `jellyfin.py` | `JellyfinLibrary`: browse three levels, and fetch the art and audio |
 | `tokens.py` | Short opaque stream tokens, and the 255-character check |
-| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold |
+| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the stop that ends it |
 | `service.py` | The process-wide singletons, and the switches that decide they exist |
 
 `queue.py` is the only module that knows about both halves — `heos.py` and
@@ -163,6 +199,20 @@ nothing and cost an inbound HTTP surface.
 keepalive, reconnect with backoff, and demultiplexing unsolicited events from
 command responses. Same trade as `recurring-ical-events` in Phase 1, and it has
 no transitive dependencies.
+
+**`connected` means connected now.** It used to be `self._heos is not None`, which only ever
+meant "has connected at some point" — pyheos reconnects underneath the controller without
+clearing the handle, so a system that dropped off wifi during the evening kept answering
+True. The panel switches on that field to decide whether the music UI is healthy, so it went
+on offering buttons whose commands could only fail. It now reads pyheos's own
+`connection_state`, and RECONNECTING counts as not connected: it resolves itself in seconds,
+but until it does a command sent now will not arrive.
+
+Reads and writes still degrade differently and deliberately: `/api/music/players` answers 200
+with `connected: false`, because a cold start is ordinary and the panel needs something to
+render. A command answers 503 (nothing to send it down), 502 (the speaker refused it) or 404
+(no such speaker) — never a 200 the speaker never heard, and no longer a 500, which is what
+everything but `KeyError` used to produce.
 
 **This is the first long-lived outbound connection in the app.** Everything
 else reaches the network on an interval, fetches, and lets go. That is why it
@@ -355,7 +405,7 @@ be mostly in the past — on a Sunday, a snapped three-day view is two days alre
 | Endpoint | Returns |
 |---|---|
 | `GET /healthz` | Liveness |
-| `GET /api/agenda` | Flat chronological events, each with its `calendar: {id, name, color}` |
+| `GET /api/agenda` | Flat chronological events from today on, each with its `calendar: {id, name, color}` and an `agenda_date` |
 | `GET /api/calendar?view=day\|next3\|next5\|week\|month&anchor=` | Server-bucketed grid, plus title and prev/next anchors |
 | `GET /api/calendars` | The legend — every enabled source, so empty calendars still appear |
 | `GET /api/devices/{id}/screen` | `{state, until, poll_after_seconds}` for the Pi's screen agent |
@@ -539,10 +589,12 @@ single-calendar panel, where the legend renders nothing at all.
 | `api.ts` | **All** types, all fetchers, and the SSE subscriber |
 | `theme.css` | The whole design layer: `@font-face`, the colour tokens, the `.caps` label class. Imported once from `+layout.svelte` |
 | `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour`, `formatMasthead`, `hasPassed`, `formatSkyDate`, `addDays` |
-| `watchdog.ts` | Reloads the page if the SSE stream goes quiet |
+| `watchdog.ts` | Reloads the page if the SSE stream goes quiet, or on a fatal stream error |
+| `retry.ts` | Backoff for a load that failed, so a panel that started before the backend heals itself |
 | `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
+| `music.svelte.ts` | The speakers, the selected one, and the commands that change them |
 | `calendarVisibility.ts` | localStorage set of hidden calendar ids |
 | `musicPreference.ts` | localStorage of the controlled speaker, and the fallback when it is gone |
 | `viewPreference.ts` | localStorage of the last-selected view |
@@ -571,6 +623,32 @@ single-calendar panel, where the legend renders nothing at all.
 | `NowPlaying.svelte` | Art, title, artist, album, progress |
 | `TransportControls.svelte` | Play/pause/skip/stop, inline SVG, compact and full |
 | `PlayerPicker.svelte` | Which speaker; renders nothing for a one-speaker household |
+
+### `api/routes/`
+
+| Module | Endpoints |
+|---|---|
+| `system.py` | `/healthz`, the SSE stream, the device screen schedule |
+| `calendar.py` | `/api/agenda`, `/api/calendar`, `/api/calendars` |
+| `weather.py` | `/api/weather` |
+| `photos.py` | The screensaver playlist and its derivatives |
+| `music.py` | Speakers, the library, the art and audio proxies |
+
+This was one 749-line module. The split is by what an endpoint is *about*; paths are
+unchanged and `main.py` still imports a single `router`.
+
+Two things left rather than moved sideways, because they were another layer's work:
+the Jellyfin proxies are now `JellyfinLibrary.art()` and `.open_stream()` — a route should
+turn a call into a status, not hold an httpx client open across a streaming response — and
+the now-playing wire shape is in `api/serializers.py` beside the event one.
+
+**Settings live in `api/deps.py`, not per router.** Five module-level `settings` globals
+would mean a test had to know which router file an endpoint happened to land in. Reference it
+as `deps.settings`; `from app.api.deps import settings` binds a copy and defeats the patch.
+
+**Request bodies are Pydantic models**, not `dict` picked apart by hand. That moves a
+malformed body to a 422 that names the field, and leaves 400 for what a schema genuinely
+cannot answer — an action that is a string but not one this speaker has.
 
 ### Idioms
 
@@ -611,7 +689,24 @@ Components keep their layout and nothing else, so the panel can be re-skinned fr
 | `--font-display`, `--font-body` | Newsreader and Figtree |
 | `--tap`, `--radius-pill`, `--radius-sm` | 48px, and the two radii the direction keeps |
 
-**`.caps` is the one global utility class.** Small, bold, letterspaced, upper, muted — the
+**Five global classes, and they are the whole of the shared design.** `.caps` and `.caps-sm`
+are the section label at its two sizes; `.struck` is what a finished appointment looks like;
+`.tab` is an underlined tab; `.control-round` is an outlined round control. Plus bare
+`button` rules for the touch behaviour and the focus ring that every button needs.
+
+They exist because the components had written them out privately — `.passed` three times,
+the small caps run three times, the tab three times, the round control five times — and had
+already begun to drift: two different custom properties carrying the calendar's colour, two
+different paddings on the same tab, and a focus ring on eight button groups but not the other
+two. That last one is the argument in miniature: a rule that lives in ten places is a rule
+that will be missing from one of them.
+
+Svelte scopes component styles, so a scoped selector outranks these and a component that
+genuinely wants something different still can — `PlayerPicker` keeps tighter tab padding,
+`.open-music` is a pill rather than a circle. The difference is that those are now one line
+each, and visible as deliberate.
+
+**`.caps` in particular.** Small, bold, letterspaced, upper, muted — the
 direction's section label, used in the masthead, the agenda, both music screens and the
 now-playing strip. Six private copies would drift, which is the thing a design layer exists
 to prevent. It is global because Svelte scopes component styles to their own markup.
@@ -657,6 +752,35 @@ too, and the whole strip is one pointer-captured gesture. Letters with nothing b
 stay in place, dimmed, and jump to the next letter that does have something: a rail whose
 letters move as the library grows is one you have to read instead of aim at. It appears
 only above 20 artists, and only on the artists level.
+
+### When the backend is not there yet
+
+The Pi boots faster than the container, so the panel's opening round of fetches
+routinely happens against a backend that is still starting. Every one of them used
+to be an unhandled rejection, and nothing was left behind to try again: the masthead
+painted, `grid` stayed null so the entire calendar body was absent, and `loadPhotos`
+rejected before it could start the idle timer, so the screensaver could not appear
+either. Once the backend arrived the SSE stream connected perfectly happily — and
+because the stream was *healthy*, the staleness watchdog had nothing to react to. The
+panel sat on a date and an empty page indefinitely.
+
+Two things close it, and they are deliberately independent:
+
+- **Every fetch goes through `reloadEverything` or `guard`** in `+page.svelte`. A round
+  with any rejection arms `retry.ts`'s backoff — 1s, 2s, 5s, 10s, then every 30s —
+  which re-runs the whole round until one comes back clean. Backoff rather than a fixed
+  interval because "still booting" and "down for the evening" look identical from the
+  browser and want opposite things.
+- **`subscribeToUpdates` now has an `error` listener.** `EventSource` reports both of its
+  failure modes through that one event and they need opposite responses: a dropped
+  connection leaves `readyState` at CONNECTING and the browser retries by itself, while a
+  non-2xx status or wrong `Content-Type` — a proxy answering 502 through a redeploy — is
+  fatal per spec and nothing will ever reopen it. The fatal case calls
+  `watchdog.reloadNow()`, which shares the staleness check's own reload throttle so a
+  backend that is simply down cannot put the panel in a reload loop.
+
+Verified by driving real Chrome with `/api/**` refused, then releasing it: the panel
+recovers on its own, with no reload and nobody touching it.
 
 ### Orientation
 
@@ -843,8 +967,22 @@ cd frontend && npm run check      # svelte-check, the only frontend gate
 docker compose up --build         # the real thing
 ```
 
-There is no CI, no Makefile, and no linter or formatter configured. Line length is held to
-roughly 95 characters by hand.
+There is no CI and no Makefile. Ruff is configured (`cd backend && uv run ruff check .`) and
+is expected to be clean; it is not a formatter and nothing reformats this code.
+
+**What it checks is deliberately narrow.** `E`, `F`, `I`, `B` — unused imports and locals,
+undefined names, import order, and bugbear's real-defect rules. Pyupgrade (`UP`) is left out
+on purpose: it wanted eighty-nine changes, every one a rewrite of correct code into
+differently-spelled correct code. A linter that opens with two hundred stylistic opinions on
+an existing codebase gets switched off within the week, and the rules that find actual
+defects go with it. Line length is 100 rather than the ~95 the code was held to by hand,
+because picking the exact number would have meant reflowing seventy readable lines.
+
+`E711`/`E712` are ignored repo-wide: SQLAlchemy filters are *expressions*, so
+`Model.flag == False` builds SQL where `not Model.flag` evaluates in Python and silently
+matches everything. Alembic's own files are exempt from import sorting — it writes them in
+its own order, and a rule that fails every `revision --autogenerate` teaches people to ignore
+the linter.
 
 ### Migrations
 
@@ -860,6 +998,15 @@ automatically at startup via `run_migrations()`.
 `migrations/env.py` passes `disable_existing_loggers=False` to `fileConfig`. Without it,
 Alembic silently disables every logger created before it runs — including the app's own,
 which swallows error logs.
+
+`test_migrations.py` is the one place the chain is actually executed. It runs `upgrade head`
+against a throwaway file, checks there is a single head, round-trips down to `base` and back,
+and — the point of it — runs Alembic's own `compare_metadata` against `SQLModel.metadata`. A
+column added to `models.py` with no revision written for it passes every other test in the
+suite, because they all build their schema with `create_all` and never look at a migration;
+it fails here. Note that `env.py` overwrites `sqlalchemy.url` from the settings singleton, so
+steering it at a temp file means setting `HOMEDASH_DB_PATH` *and* clearing
+`get_settings.cache_clear()`.
 
 ### Tests
 

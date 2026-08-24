@@ -13,6 +13,8 @@ what asks it.
 
 from dataclasses import dataclass, field
 
+from pyheos import ConnectionState
+
 
 @dataclass
 class FakeMedia:
@@ -88,6 +90,11 @@ class FakeHeos:
         self.load_count = 0
         self.dispatcher = FakeDispatcher()
         self.disconnected = False
+        # The real enum, not a string, so this fake cannot drift into agreeing
+        # with a value pyheos does not use. Settable, because a speaker system
+        # dropping off wifi mid-evening is a state worth being able to write a
+        # test about - it used to be indistinguishable from a healthy one.
+        self.connection_state = ConnectionState.CONNECTED
 
     async def get_players(self, *, refresh: bool = False) -> dict[int, FakePlayer]:
         self.load_count += 1

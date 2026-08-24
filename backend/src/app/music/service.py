@@ -80,7 +80,7 @@ def start_music() -> None:
             settings.jellyfin_url, settings.jellyfin_api_key, settings.jellyfin_music_library_id
         )
         _tokens = TokenStore()
-        _queues = QueueManager(play_url=_play_url, url_for=_url_for)
+        _queues = QueueManager(play_url=_play_url, url_for=_url_for, stop_player=_stop_player)
         if not settings.public_base_url:
             logger.warning(
                 "HOMEDASH_JELLYFIN_URL is set but HOMEDASH_PUBLIC_BASE_URL is empty. "
@@ -144,6 +144,12 @@ def _url_for(track) -> str:
 async def _play_url(player_id: int, url: str) -> None:
     assert _controller is not None
     await _controller.play_url(player_id, url)
+
+
+async def _stop_player(player_id: int) -> None:
+    """Only for ending an album that has been skipped past - see queue.next."""
+    assert _controller is not None
+    await _controller.transport(player_id, "stop")
 
 
 async def _on_player_state(player_id: int, state: str) -> None:

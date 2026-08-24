@@ -61,7 +61,6 @@ class Event(SQLModel, table=True):
     source_id: int = Field(foreign_key="calendar_sources.id")
     uid: str
     raw_vevent: str
-    etag: str | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

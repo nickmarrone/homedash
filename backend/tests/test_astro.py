@@ -209,7 +209,9 @@ class TestSkyPositions:
         time that drifts, would miss this."""
         latitude, longitude = SAN_FRANCISCO
         noon = datetime(2026, 12, 21, 20, tzinfo=UTC)  # about solar noon in California
-        altitude = altitude_of(*sun_equatorial(julian_day(noon)), julian_day(noon), latitude, longitude)
+        altitude = altitude_of(
+            *sun_equatorial(julian_day(noon)), julian_day(noon), latitude, longitude
+        )
         assert abs(altitude - (90 - latitude - 23.44)) < 1.0
 
     def test_the_full_moon_is_opposite_the_sun(self):

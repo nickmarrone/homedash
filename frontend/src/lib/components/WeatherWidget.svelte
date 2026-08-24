@@ -5,6 +5,11 @@
 	let { weather }: { weather: Weather | null } = $props();
 
 	let current = $derived(weather?.current);
+	// `temperature_2m` is optional in the payload, and defaulting it to 0
+	// printed a believable `0°F` in the largest type on the panel - a wrong
+	// number nobody would question, where a missing one is obvious at a
+	// glance. Almanac already treats its own fields this way.
+	let temperature = $derived(current?.temperature_2m);
 	// Open-Meteo returns "°F"/"°C" in *_units; strip the degree sign so the
 	// markup keeps its own and we render "72°F" rather than "72°°F".
 	let unit = $derived((weather?.current_units?.temperature_2m ?? '').replace('°', ''));
@@ -15,10 +20,10 @@
      moved into Almanac, which lays them along one line instead of down the
      right edge. -->
 <div class="weather">
-	{#if !current}
+	{#if !current || temperature === undefined}
 		<p class="empty">Weather unavailable.</p>
 	{:else}
-		<span class="temp">{Math.round(current.temperature_2m ?? 0)}°{unit}</span>
+		<span class="temp">{Math.round(temperature)}°{unit}</span>
 		<span class="caps desc">{weatherDescription(current.weather_code)}</span>
 	{/if}
 </div>

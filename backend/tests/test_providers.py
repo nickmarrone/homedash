@@ -9,7 +9,12 @@ from app.calendars.providers import identify
 @pytest.mark.parametrize(
     "url,expected_key,expected_adapter",
     [
-        ("https://calendar.google.com/calendar/ical/abc%40group.calendar.google.com/private-x/basic.ics", "google", "google"),
+        (
+            "https://calendar.google.com/calendar/ical/"
+            "abc%40group.calendar.google.com/private-x/basic.ics",
+            "google",
+            "google",
+        ),
         ("https://www.google.com/calendar/ical/xyz/basic.ics", "google", "google"),
         ("webcal://p52-caldav.icloud.com/published/2/MTk3", "icloud", "caldav"),
         ("https://p01-calendars.icloud.com/published/2/abc", "icloud", "caldav"),

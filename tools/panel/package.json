@@ -1,0 +1,14 @@
+{
+  "name": "homedash-panel-harness",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Headless-browser harness that drives the HomeDash panel in real Chrome",
+  "scripts": {
+    "smoke": "node panel.mjs smoke",
+    "shot": "node panel.mjs shot"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

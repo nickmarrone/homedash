@@ -26,6 +26,7 @@ in the order they were not issued in.
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from app.music.base import Track
@@ -58,13 +59,19 @@ class PlayerQueue:
 class QueueManager:
     """One queue per speaker, and the rules for moving it along.
 
-    Deliberately knows nothing about HEOS or Jellyfin: it is handed a callable
-    that plays a URL, and a callable that turns a track into one. That is what
-    keeps this - the part with the actual logic in it - testable without either.
+    Deliberately knows nothing about HEOS or Jellyfin: it is handed callables
+    that drive a speaker and turn a track into a URL. That is what keeps this -
+    the part with the actual logic in it - testable without either.
+
+    Typed rather than left as `object`. They were called anyway, so the
+    annotation was doing nothing but obliging a reader to go and find
+    `music/service.py` to learn the signatures.
     """
 
-    play_url: object
-    url_for: object
+    play_url: Callable[[int, str], Awaitable[None]]
+    url_for: Callable[[Track], str]
+    # Only used to end an album that has been skipped past. See `next`.
+    stop_player: Callable[[int], Awaitable[None]] | None = None
     queues: dict[int, PlayerQueue] = field(default_factory=dict)
     # One lock per speaker, created on demand. Two speakers must never wait on
     # each other: a stalled command to one would otherwise hold up the album
@@ -91,9 +98,6 @@ class QueueManager:
         if lock is None:
             lock = self.locks[player_id] = asyncio.Lock()
         return lock
-
-    def has(self, player_id: int) -> bool:
-        return player_id in self.queues
 
     def current(self, player_id: int) -> Track | None:
         """The track this speaker was actually sent, or None.
@@ -173,7 +177,19 @@ class QueueManager:
             if queue is None:
                 return False
             if queue.remaining == 0:
+                # Skipping past the last track ends the album, and the speaker
+                # has to be told: content sent as a URL is still playing right
+                # now. Dropping the queue alone left the music running while
+                # the panel's queue display vanished and now-playing reverted
+                # to the speaker's own bitrate-and-codec description of the
+                # stream - a stop button's job done by the skip button, badly.
+                #
+                # `on_state` hits this same branch and must *not* stop
+                # anything, because there the track has genuinely ended and the
+                # speaker stopped by itself.
                 self.clear(player_id)
+                if self.stop_player is not None:
+                    await self.stop_player(player_id)
                 return True
             queue.index += 1
             await self._play_current(player_id)

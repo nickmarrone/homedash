@@ -20,6 +20,7 @@
 		{#each players as player (player.id)}
 			<button
 				type="button"
+				class="tab"
 				class:selected={player.id === selectedId}
 				class:unavailable={!player.available}
 				aria-pressed={player.id === selectedId}
@@ -39,24 +40,11 @@
 
 	/* Underlined, like the view switcher and the music tabs: one selection mark
 	   for the whole panel, so a chosen thing always looks chosen the same way. */
+	/* The shared tab is in theme.css. Tighter padding than the others here,
+	   because a household with four speakers needs four names to fit a row
+	   that is sharing the overlay header with the tabs. */
 	button {
-		min-height: var(--tap);
 		padding: 0 0.7rem;
-		border: none;
-		border-bottom: 2px solid transparent;
-		background: transparent;
-		color: var(--ink-muted);
-		font: inherit;
-		font-size: 1.0625rem;
-		cursor: pointer;
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	.selected {
-		color: var(--ink);
-		font-weight: 600;
-		border-bottom-color: var(--ink);
 	}
 
 	/* Still selectable: a speaker often reports unavailable because it is

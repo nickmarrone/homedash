@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.api import routes as routes_module
+from app.api import deps as api_deps
 from app.api.routes import router
 from app.config import Settings
 from app.db import get_session
@@ -33,7 +33,7 @@ def cache_dir(tmp_path):
 @pytest.fixture
 def client(session, monkeypatch, cache_dir):
     monkeypatch.setattr(
-        routes_module,
+        api_deps,
         "settings",
         Settings(
             _env_file=None,
@@ -136,7 +136,7 @@ class TestPlaylist:
         for i in range(5):
             add_photo(session, path=f"{i}.jpg", photo_hash=f"hash{i}")
         monkeypatch.setattr(
-            routes_module, "settings", Settings(_env_file=None, photo_max_count=3)
+            api_deps, "settings", Settings(_env_file=None, photo_max_count=3)
         )
 
         body = client.get("/api/photos").json()

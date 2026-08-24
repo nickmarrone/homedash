@@ -21,7 +21,7 @@
      Lite ships no emoji font, so a play glyph would render as a tofu box on
      the actual wall panel. MoonGlyph.svelte is the precedent. -->
 <div class="transport" class:compact>
-	<button type="button" aria-label="Previous track" onclick={() => onAction('previous')}>
+	<button type="button" class="control-round" aria-label="Previous track" onclick={() => onAction('previous')}>
 		<svg viewBox="0 0 24 24" aria-hidden="true">
 			<path d="M18 5 8 12l10 7z" fill="currentColor" />
 			<rect x="5" y="5" width="2.2" height="14" fill="currentColor" />
@@ -30,7 +30,7 @@
 
 	<button
 		type="button"
-		class="primary"
+		class="control-round primary"
 		aria-label={playing ? 'Pause' : 'Play'}
 		onclick={() => onAction(playing ? 'pause' : 'play')}
 	>
@@ -46,7 +46,7 @@
 		{/if}
 	</button>
 
-	<button type="button" aria-label="Next track" onclick={() => onAction('next')}>
+	<button type="button" class="control-round" aria-label="Next track" onclick={() => onAction('next')}>
 		<svg viewBox="0 0 24 24" aria-hidden="true">
 			<path d="M6 5l10 7-10 7z" fill="currentColor" />
 			<rect x="16.8" y="5" width="2.2" height="14" fill="currentColor" />
@@ -54,7 +54,7 @@
 	</button>
 
 	{#if !compact}
-		<button type="button" aria-label="Stop" onclick={() => onAction('stop')}>
+		<button type="button" class="control-round" aria-label="Stop" onclick={() => onAction('stop')}>
 			<svg viewBox="0 0 24 24" aria-hidden="true">
 				<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" />
 			</svg>
@@ -71,23 +71,6 @@
 
 	/* Outlined, not filled - the same treatment the period arrows get, so every
 	   circular control on the panel looks like the same kind of thing. */
-	button {
-		display: grid;
-		place-items: center;
-		/* 48px, as everywhere: the smallest target that stays reliable for a
-		   fingertip on a wall panel, where you are reaching rather than aiming. */
-		min-width: var(--tap);
-		min-height: var(--tap);
-		padding: 0;
-		border: 1px solid var(--rule-strong);
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--ink-soft);
-		cursor: pointer;
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
-	}
-
 	/* Play/pause is the one control anybody reaches for without looking, so it
 	   is the one solid shape in the group. */
 	.primary {

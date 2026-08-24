@@ -3,7 +3,7 @@
 Read-only, and deliberately so: the API key is created in Jellyfin's dashboard
 and nothing here ever writes. Browsing is three calls that map one-to-one onto
 the three panel screens, and the audio itself is opened as a stream rather than
-buffered - see `stream()`.
+buffered - see `open_stream()`.
 
 **The key never leaves the server.** The speaker fetches audio from HomeDash,
 not from Jellyfin, so no credential is ever put in a URL. That is partly the
@@ -198,6 +198,74 @@ class JellyfinLibrary:
         44px thumbnail.
         """
         return f"{self.base_url}/Items/{item_id}/Images/Primary?maxWidth={max_width}"
+
+    # -- fetching media ----------------------------------------------------
+    #
+    # Both of these are proxies rather than links, for the reason at the top of
+    # this module: the API key must never reach the browser or the speaker. And
+    # both live here rather than in the route that serves them - a route's job
+    # is to turn a request into a call and a result into a status, not to hold
+    # an httpx client open across a streaming response.
+
+    async def art(self, item_id: str, max_width: int) -> tuple[bytes, str] | None:
+        """One cover image and its content type, or None if there isn't one.
+
+        A missing cover is an ordinary thing - the panel already falls back to
+        a placeholder - so it is None rather than an exception. Anything else
+        going wrong is a JellyfinError, same as browsing.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(
+                    self.art_url(item_id, max_width), headers=self.headers
+                )
+        except httpx.HTTPError as exc:
+            raise JellyfinError(f"could not reach Jellyfin: {exc}") from exc
+        if response.status_code != 200:
+            return None
+        return response.content, response.headers.get("Content-Type", "image/jpeg")
+
+    async def open_stream(self, track_id: str, range_header: str | None = None):
+        """Open the audio for one track, without reading it.
+
+        Returns `(response, client)`, both still open: the caller iterates the
+        response and must close both when it is done. That is an awkward
+        contract and it is the honest one - a streaming response is pulled long
+        after the handler that created it has returned, so neither object can
+        be scoped to a `with` block here.
+
+        `Range` is forwarded rather than answered, because HEOS asks for ranges
+        and Jellyfin already implements them properly for the underlying file.
+        Nothing else from the speaker's request is passed on.
+
+        `Accept-Encoding: identity` is set explicitly, and it is not
+        belt-and-braces. The caller streams `aiter_raw()` - undecoded bytes -
+        and forwards only Content-Length, Content-Range and Accept-Ranges, so a
+        `Content-Encoding` from Jellyfin would be dropped and the speaker would
+        be handed compressed bytes it has no way to know are compressed. httpx
+        sends `gzip, deflate` by default, so declining has to be deliberate.
+        Audio is already compressed and no sane server would gzip it, which is
+        exactly why this would be found the hard way.
+        """
+        headers = dict(self.headers)
+        headers["Accept-Encoding"] = "identity"
+        if range_header is not None:
+            headers["Range"] = range_header
+
+        client = httpx.AsyncClient(timeout=None, follow_redirects=True)
+        try:
+            request = client.build_request("GET", self.stream_url(track_id), headers=headers)
+            response = await client.send(request, stream=True)
+        except httpx.HTTPError as exc:
+            await client.aclose()
+            raise JellyfinError(f"could not reach Jellyfin: {exc}") from exc
+
+        if response.status_code >= 400:
+            status = response.status_code
+            await response.aclose()
+            await client.aclose()
+            raise JellyfinError(f"Jellyfin returned {status}")
+        return response, client
 
 
 def _ticks_to_ms(ticks: Any) -> int | None:

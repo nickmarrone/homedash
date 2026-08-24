@@ -247,7 +247,7 @@ def items_to_vevents(items: list[dict]) -> list[VEvent]:
 
 
 def _build_component(item: dict, uid: str, recurrence_id=None) -> VEvent | None:
-    start, start_is_date = _parse_point(item.get("start") or {})
+    start, _ = _parse_point(item.get("start") or {})
     if start is None:
         return None
     end, _ = _parse_point(item.get("end") or {})

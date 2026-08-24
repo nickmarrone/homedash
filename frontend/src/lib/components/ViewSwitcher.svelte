@@ -23,6 +23,7 @@
 	{#each views as option (option.id)}
 		<button
 			type="button"
+			class="tab"
 			class:selected={view === option.id}
 			aria-pressed={view === option.id}
 			onclick={() => onSelect(option.id)}
@@ -41,41 +42,4 @@
 		flex-wrap: wrap;
 	}
 
-	button {
-		/* 48px of height is what makes a target reliable for a fingertip on a
-		   wall panel, where you are reaching rather than aiming. */
-		min-height: var(--tap);
-		padding: 0 0.9rem;
-		border: none;
-		/* The selected mark is an underline, so every button carries a
-		   transparent one and only the width of the row changes. */
-		border-bottom: 2px solid transparent;
-		background: transparent;
-		color: var(--ink-muted);
-		font: inherit;
-		font-size: 1.0625rem;
-		cursor: pointer;
-		/* Skips the browser's 300ms double-tap-to-zoom wait. */
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	/* Underlined rather than a raised pill, the way a printed index marks the
-	   page you are on. It sits on the controls row's own rule, so the mark is
-	   the page's rule thickening under one word. */
-	.selected {
-		color: var(--ink);
-		font-weight: 600;
-		border-bottom-color: var(--ink);
-	}
-
-	/* Press feedback replaces hover, which does not exist on touch. */
-	button:active {
-		transform: scale(0.97);
-	}
-
-	button:focus-visible {
-		outline: 2px solid var(--ink);
-		outline-offset: 2px;
-	}
 </style>

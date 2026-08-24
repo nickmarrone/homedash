@@ -10,7 +10,9 @@ import logging
 import pytest
 from pydantic import ValidationError
 
+from app.calendars import sync as sync_module
 from app.config import CalendarConfig, Settings
+from app.models import CalendarSource
 
 
 def settings(**kwargs) -> Settings:
@@ -33,7 +35,9 @@ class TestCalendarConfig:
 
     def test_google_requires_credentials(self):
         with pytest.raises(ValidationError, match="requires a \"credentials\" key"):
-            CalendarConfig(name="Family", kind="google", calendar_id="abc@group.calendar.google.com")
+            CalendarConfig(
+                name="Family", kind="google", calendar_id="abc@group.calendar.google.com"
+            )
 
     def test_caldav_requires_credentials(self):
         with pytest.raises(ValidationError, match="requires a \"credentials\" key"):
@@ -41,7 +45,10 @@ class TestCalendarConfig:
 
     def test_google_key_is_the_calendar_address(self):
         cal = CalendarConfig(
-            name="Family", kind="google", calendar_id="abc@group.calendar.google.com", credentials="g"
+            name="Family",
+            kind="google",
+            calendar_id="abc@group.calendar.google.com",
+            credentials="g",
         )
         assert cal.key == "google:abc@group.calendar.google.com"
 
@@ -95,23 +102,40 @@ class TestJsonErrors:
 
 
 class TestCredentialLookup:
-    def test_resolves_a_named_blob(self):
-        s = settings(
-            calendars='[{"name": "Nick", "kind": "caldav", "url": "https://d/x", "credentials": "fm"}]',
-            calendar_credentials='{"fm": {"username": "me", "password": "pw"}}',
-        )
-        assert s.credentials_for(s.calendars[0]) == {"username": "me", "password": "pw"}
+    """Resolving a calendar's `credentials` key to the blob it names.
 
-    def test_missing_blob_is_reported_with_both_names(self):
-        s = settings(
-            calendars='[{"name": "Nick", "kind": "caldav", "url": "https://d/x", "credentials": "fm"}]'
+    Against `sync._credentials`, which is the implementation production
+    actually reaches. `Settings.credentials_for` did the same job from the
+    config object and no code path ever called it - these tests were the only
+    thing keeping it alive, and testing the copy nothing runs is worse than not
+    testing at all.
+    """
+
+    def source(self, monkeypatch, **overrides):
+        monkeypatch.setattr(sync_module, "settings", settings(**overrides))
+        return CalendarSource(
+            kind="caldav", name="Nick", url="https://d/x", credentials_ref="fm"
         )
+
+    def test_resolves_a_named_blob(self, monkeypatch):
+        row = self.source(
+            monkeypatch, calendar_credentials='{"fm": {"username": "me", "password": "pw"}}'
+        )
+        assert sync_module._credentials(row) == {"username": "me", "password": "pw"}
+
+    def test_missing_blob_is_reported_with_both_names(self, monkeypatch):
+        """Both names, because either one alone leaves the reader hunting: the
+        calendar says which entry in the config is wrong, the reference says
+        what to go and look for."""
+        row = self.source(monkeypatch)
         with pytest.raises(ValueError, match="'Nick'.*'fm'"):
-            s.credentials_for(s.calendars[0])
+            sync_module._credentials(row)
 
-    def test_ics_needs_no_credentials(self):
-        s = settings(calendars='[{"name": "Family", "url": "https://example.com/a.ics"}]')
-        assert s.credentials_for(s.calendars[0]) == {}
+    def test_a_source_with_no_reference_says_so(self, monkeypatch):
+        monkeypatch.setattr(sync_module, "settings", settings())
+        row = CalendarSource(kind="caldav", name="Nick", url="https://d/x")
+        with pytest.raises(ValueError, match="no credentials"):
+            sync_module._credentials(row)
 
 
 class TestWeekStartSetting:

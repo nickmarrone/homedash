@@ -5,7 +5,7 @@ awkward cases are pinned explicitly: DST, week boundaries, year ends, and the
 two exclusive-end conventions that decide which day an event lands on.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -93,7 +93,9 @@ class TestPeriodBounds:
         first, last = period_bounds("month", date(2028, 2, 1), "sunday")
         assert first <= date(2028, 2, 29) <= last
 
-    @pytest.mark.parametrize("year,month", [(y, m) for y in (2026, 2027, 2028) for m in range(1, 13)])
+    @pytest.mark.parametrize(
+        "year,month", [(y, m) for y in (2026, 2027, 2028) for m in range(1, 13)]
+    )
     def test_every_month_is_a_whole_number_of_weeks(self, year, month):
         first, last = period_bounds("month", date(year, month, 1), "sunday")
         assert ((last - first).days + 1) % 7 == 0
@@ -265,14 +267,36 @@ def item(start, end, all_day=False, title="Event", tz=NEW_YORK):
     )
 
 
+def week_of_aug_16(events=()):
+    """The week of 2026-08-16, viewed on Wednesday the 19th.
+
+    The same six arguments were written out at ten call sites below. Naming
+    the two windows this file actually uses puts the assertion on the line
+    rather than the fixture, and stops a reader checking six dates to work out
+    that two tests differ only in their events.
+    """
+    return build_days(
+        list(events), date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week",
+        date(2026, 8, 19),
+    )
+
+
+def day_of_aug_19(events=()):
+    """A single-day view of 2026-08-19, viewed on the day itself."""
+    return build_days(
+        list(events), date(2026, 8, 19), date(2026, 8, 19), date(2026, 8, 19), "day",
+        date(2026, 8, 19),
+    )
+
+
 class TestBuildDays:
     def test_every_date_in_range_gets_a_bucket(self):
-        days = build_days([], date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))
+        days = week_of_aug_16()
         assert len(days) == 7
         assert days[0]["date"] == "2026-08-16"
 
     def test_today_is_marked_once(self):
-        days = build_days([], date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))
+        days = week_of_aug_16()
         assert [d["date"] for d in days if d["is_today"]] == ["2026-08-19"]
 
     def test_padding_days_are_marked_outside_the_month(self):
@@ -283,18 +307,21 @@ class TestBuildDays:
         assert sum(1 for d in days if d["in_period"]) == 31
 
     def test_a_week_view_has_no_padding(self):
-        days = build_days([], date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))
+        days = week_of_aug_16()
         assert all(d["in_period"] for d in days)
 
     def test_a_multi_day_event_appears_on_every_day_it_spans(self):
         events = [item(datetime(2026, 8, 17), datetime(2026, 8, 20), all_day=True, title="Camp")]
-        days = build_days(events, date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))
+        days = week_of_aug_16(events)
         with_camp = [d["date"] for d in days if d["items"]]
         assert with_camp == ["2026-08-17", "2026-08-18", "2026-08-19"]
 
     def test_continuation_flags_mark_the_middle_and_ends(self):
         events = [item(datetime(2026, 8, 17), datetime(2026, 8, 20), all_day=True)]
-        days = {d["date"]: d for d in build_days(events, date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))}
+        days = {
+            d["date"]: d
+            for d in week_of_aug_16(events)
+        }
 
         first_day = days["2026-08-17"]["items"][0]
         middle = days["2026-08-18"]["items"][0]
@@ -306,7 +333,7 @@ class TestBuildDays:
     def test_an_event_already_in_progress_shows_on_the_opening_day(self):
         """A start-time cutoff would drop this from the view entirely."""
         events = [item(datetime(2026, 8, 14), datetime(2026, 8, 20), all_day=True)]
-        days = build_days(events, date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))
+        days = week_of_aug_16(events)
         opening = days[0]
         assert opening["items"]
         assert opening["items"][0]["continues_before"] is True
@@ -316,7 +343,7 @@ class TestBuildDays:
             item(datetime(2026, 8, 19, 13, 0), datetime(2026, 8, 19, 14, 0), title="Timed"),
             item(datetime(2026, 8, 19), datetime(2026, 8, 20), all_day=True, title="Banner"),
         ]
-        days = build_days(events, date(2026, 8, 19), date(2026, 8, 19), date(2026, 8, 19), "day", date(2026, 8, 19))
+        days = day_of_aug_19(events)
         assert [i["title"] for i in days[0]["items"]] == ["Banner", "Timed"]
 
     def test_timed_events_sort_by_clock(self):
@@ -324,10 +351,10 @@ class TestBuildDays:
             item(datetime(2026, 8, 19, 20, 0), datetime(2026, 8, 19, 21, 0), title="Later"),
             item(datetime(2026, 8, 19, 13, 0), datetime(2026, 8, 19, 14, 0), title="Earlier"),
         ]
-        days = build_days(events, date(2026, 8, 19), date(2026, 8, 19), date(2026, 8, 19), "day", date(2026, 8, 19))
+        days = day_of_aug_19(events)
         assert [i["title"] for i in days[0]["items"]] == ["Earlier", "Later"]
 
     def test_events_outside_the_range_are_not_included(self):
         events = [item(datetime(2026, 9, 15, 13, 0), datetime(2026, 9, 15, 14, 0))]
-        days = build_days(events, date(2026, 8, 16), date(2026, 8, 22), date(2026, 8, 16), "week", date(2026, 8, 19))
+        days = week_of_aug_16(events)
         assert all(not d["items"] for d in days)

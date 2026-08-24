@@ -8,7 +8,6 @@ would have been baked into the grid views:
   * all-day placeholders converted at all, landing a day early
 """
 
-import os
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo

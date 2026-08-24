@@ -4,14 +4,15 @@ Constructed without the lifespan, so no migrations run, no scheduler starts
 and no weather is fetched - the session fixture supplies the schema.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import routes as routes_module
+from app.api import deps as api_deps
 from app.api.routes import router
+from app.api.routes import weather as weather_routes
 from app.config import Settings
 from app.db import get_session
 from app.models import CalendarSource, Event, EventInstance
@@ -20,7 +21,7 @@ from app.models import CalendarSource, Event, EventInstance
 @pytest.fixture
 def client(session, monkeypatch):
     monkeypatch.setattr(
-        routes_module,
+        api_deps,
         "settings",
         Settings(_env_file=None, home_timezone="America/New_York", week_starts_on="sunday"),
     )
@@ -146,15 +147,25 @@ class TestContent:
         assert payload["days"][0]["items"][0]["calendar"]["color"] == "#2563eb"
 
     def test_agenda_and_calendar_agree_on_item_shape(self, client, session, calendar):
-        """One frontend renderer serves both, so the shapes must not drift."""
+        """The panel types a grid item as an agenda item plus extras, so every
+        field the two share has to mean the same thing in both.
+
+        They are not identical, and should not be: each endpoint adds what
+        only it can know. The grid says where an item sits relative to the day
+        it is drawn on; the agenda says which heading to file it under. What
+        must never drift is the core underneath both.
+        """
         add_instance(session, calendar, datetime(2099, 1, 1, 16, 0), datetime(2099, 1, 1, 17, 0))
         agenda = client.get("/api/agenda").json()
         grid = client.get("/api/calendar?view=day&anchor=2099-01-01").json()
 
         grid_item = grid["days"][0]["items"][0]
-        assert set(agenda[0]) <= set(grid_item)
-        for key in agenda[0]:
-            assert agenda[0][key] == grid_item[key]
+        agenda_item = agenda[0]
+
+        assert set(agenda_item) - set(grid_item) == {"agenda_date"}
+        assert set(grid_item) - set(agenda_item) == {"continues_before", "continues_after"}
+        for key in set(agenda_item) & set(grid_item):
+            assert agenda_item[key] == grid_item[key], key
 
 
 class TestLookaheadViews:
@@ -202,7 +213,7 @@ class TestLookaheadViews:
 class TestWeekStart:
     def test_monday_start_shifts_the_grid(self, client, monkeypatch):
         monkeypatch.setattr(
-            routes_module,
+            api_deps,
             "settings",
             Settings(_env_file=None, home_timezone="America/New_York", week_starts_on="monday"),
         )
@@ -220,7 +231,7 @@ class TestWeatherEndpoint:
         weather cache should still leave a populated astro block - otherwise a
         failed fetch looks like a broken panel rather than a missing forecast.
         """
-        monkeypatch.setattr(routes_module, "get_cached_weather", lambda: None)
+        monkeypatch.setattr(weather_routes, "get_cached_weather", lambda: None)
 
         payload = client.get("/api/weather").json()
 
@@ -230,7 +241,7 @@ class TestWeatherEndpoint:
 
     def test_the_cache_is_passed_through_alongside_it(self, client, monkeypatch):
         monkeypatch.setattr(
-            routes_module, "get_cached_weather", lambda: {"current": {"temperature_2m": 71.0}}
+            weather_routes, "get_cached_weather", lambda: {"current": {"temperature_2m": 71.0}}
         )
 
         payload = client.get("/api/weather").json()

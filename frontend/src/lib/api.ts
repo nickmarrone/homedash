@@ -4,7 +4,10 @@ export interface AgendaCalendar {
 	color: string;
 }
 
-export interface AgendaItem {
+/** The fields /api/agenda and /api/calendar both emit, and which must keep
+ * meaning the same thing in both - the backend builds them in one serializer
+ * for that reason. Each endpoint then adds what only it can know. */
+export interface EventItem {
 	id: number;
 	title: string;
 	location: string | null;
@@ -14,9 +17,19 @@ export interface AgendaItem {
 	calendar: AgendaCalendar | null;
 }
 
-/** One item as it appears inside a calendar grid: an agenda item plus where
+/** One item in the flat forward-looking list. */
+export interface AgendaItem extends EventItem {
+	/** The local date to file this under, `YYYY-MM-DD`. Normally the day it
+	 * starts - but an event already in progress starts in the past, and the
+	 * agenda has no heading for a day that has scrolled off it, so the server
+	 * clamps those to today. Computed there, not here, because the panel must
+	 * never consult its own clock. */
+	agenda_date: string;
+}
+
+/** One item as it appears inside a calendar grid: the shared shape plus where
  * it sits relative to the day it is being rendered on. */
-export interface CalendarGridItem extends AgendaItem {
+export interface CalendarGridItem extends EventItem {
 	continues_before: boolean;
 	continues_after: boolean;
 }
@@ -127,8 +140,6 @@ export interface Weather {
 	hourly?: WeatherHourly;
 	air_quality?: WeatherAirQuality;
 	current_units?: WeatherUnits;
-	daily_units?: WeatherUnits;
-	hourly_units?: WeatherUnits;
 	astro?: Astro;
 	fetched_at?: string;
 }
@@ -366,6 +377,11 @@ export interface UpdateStreamHandlers {
 	onReconnect?: () => void;
 	/** Called on every message of any kind, for the staleness watchdog. */
 	onMessage?: () => void;
+	/** The stream errored. `fatal` distinguishes the two cases EventSource
+	 * treats very differently: it retries a dropped connection on its own, but
+	 * a non-2xx status or a wrong Content-Type closes the stream for good and
+	 * it will never come back by itself. */
+	onError?: (fatal: boolean) => void;
 }
 
 /** Subscribes to the backend's SSE stream. Returns an unsubscribe function. */
@@ -398,6 +414,25 @@ export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 		handlers.onMessage?.();
 		if (hasConnected) handlers.onReconnect?.();
 		hasConnected = true;
+	});
+
+	source.addEventListener('error', () => {
+		// EventSource reports both of its failure modes through this one
+		// event, and they need opposite responses. A dropped connection leaves
+		// readyState CONNECTING and the browser retries by itself. A non-2xx
+		// status or a wrong Content-Type - a proxy answering 502 through a
+		// redeploy, say - is fatal per spec: readyState goes to CLOSED and
+		// nothing will ever reopen it. That case used to be entirely silent,
+		// leaving the staleness watchdog as the only thing that would ever
+		// notice, a hundred seconds later and with no way to tell it apart
+		// from a real outage.
+		const fatal = source.readyState === EventSource.CLOSED;
+		// Only the fatal case is worth saying out loud. An ordinary drop is
+		// routine on a page that stays open for months - any proxy timeout does
+		// it - and the browser reopens it without help, so logging those would
+		// bury the one that matters in a month of noise.
+		if (fatal) console.warn('HomeDash: SSE stream closed for good; reloading');
+		handlers.onError?.(fatal);
 	});
 
 	return () => source.close();

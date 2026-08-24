@@ -21,7 +21,7 @@
 <div class="month">
 	<div class="weekdays" aria-hidden="true">
 		{#each weekdays as label}
-			<span>{label}</span>
+			<span class="caps-sm">{label}</span>
 		{/each}
 	</div>
 	<div class="grid">
@@ -34,11 +34,16 @@
 			>
 				<span class="daynum">{day.day_of_month}</span>
 				{#each day.items.slice(0, MAX_CHIPS) as item (item.id)}
+					{@const passed = hasPassed(day.date, item, today, now)}
+					<!-- A chip is only a title, so the strike goes on the chip itself.
+					     The list views strike their title span and leave the time
+					     beside it legible. Same treatment, two shapes. -->
 					<div
 						class="chip"
 						class:allday={item.all_day}
-						class:passed={hasPassed(day.date, item, today, now)}
-						style:--chip-color={item.calendar?.color ?? 'var(--accent-fallback)'}
+						class:passed
+						class:struck={passed}
+						style:--item-color={item.calendar?.color ?? 'var(--accent-fallback)'}
 					>
 						{#if !item.all_day}
 							<span class="chiptime">{formatTime(item.starts_at)}</span>
@@ -75,13 +80,9 @@
 		padding-bottom: 0.4rem;
 	}
 
+	/* Layout only; the type is .caps-sm in theme.css. */
 	.weekdays span {
 		padding-left: 0.55rem;
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		color: var(--ink-muted);
 	}
 
 	.cell {
@@ -151,7 +152,7 @@
 		align-items: baseline;
 		gap: 0.3rem;
 		padding-left: 0.5rem;
-		border-left: 3px solid var(--chip-color);
+		border-left: 3px solid var(--item-color);
 		font-size: 0.85rem;
 		font-weight: 500;
 		line-height: 1.25;
@@ -170,8 +171,8 @@
 		border-left: none;
 		padding-left: 0;
 		padding-bottom: 0.2rem;
-		border-bottom: 1.5px solid var(--chip-color);
-		color: var(--chip-color);
+		border-bottom: 1.5px solid var(--item-color);
+		color: var(--item-color);
 		font-weight: 700;
 		font-size: 0.8rem;
 	}
@@ -179,13 +180,11 @@
 	/* An event that has already finished, on any day. The strike is drawn in the
 	   calendar's own colour: with no grey fill left to lean on, fading the text
 	   alone stopped reading as "finished" and started reading as "faint". */
+	/* The text treatment is .struck in theme.css; this is the accent rule
+	   beside it, which mixes toward the paper's own rule rather than losing
+	   alpha - fading it would change its hue as well as its weight. */
 	.passed {
-		color: var(--ink-ghost);
-		font-weight: 400;
-		border-left-color: color-mix(in srgb, var(--chip-color) 40%, var(--rule));
-		text-decoration: line-through;
-		text-decoration-color: var(--chip-color);
-		text-decoration-thickness: 1px;
+		border-left-color: color-mix(in srgb, var(--item-color) 40%, var(--rule));
 	}
 
 	.chiptime {

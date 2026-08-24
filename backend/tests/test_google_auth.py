@@ -94,7 +94,9 @@ class TestPkce:
 class TestExchange:
     def test_sends_the_verifier_and_returns_tokens(self):
         post = recording_post(FakeResponse(payload={"refresh_token": "rt", "access_token": "at"}))
-        tokens = exchange_code("cid", "secret", "code", "http://127.0.0.1:1/", "verifier", post=post)
+        tokens = exchange_code(
+            "cid", "secret", "code", "http://127.0.0.1:1/", "verifier", post=post
+        )
 
         assert tokens["refresh_token"] == "rt"
         sent = post.calls[0][1]
@@ -105,7 +107,10 @@ class TestExchange:
         """Testing-mode refresh tokens expire after a week, which otherwise
         looks like the panel randomly breaking."""
         post = recording_post(
-            FakeResponse(status_code=400, payload={"error": "invalid_grant", "error_description": "Bad Request"})
+            FakeResponse(
+                status_code=400,
+                payload={"error": "invalid_grant", "error_description": "Bad Request"},
+            )
         )
         with pytest.raises(GoogleAuthError, match="Testing mode"):
             exchange_code("cid", "secret", "code", "http://x/", "v", post=post)

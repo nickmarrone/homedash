@@ -716,6 +716,67 @@ Verified in real Chrome at both 1920x1080 and 1080x1920 against a stubbed API,
 which is the only thing that catches a client-render failure - the backend suite
 stays green while the display is blank.
 
+### A code-quality pass over both halves (2026-08-24)
+
+A health check before the Immich source lands, not a bug hunt - and it found
+four real bugs and a path that leaves the wall panel blank. Written up in full
+in [`CODE_QUALITY_REVIEW.md`](CODE_QUALITY_REVIEW.md), including a section on
+which duplication is *not* worth extracting, which is there to be quoted back at
+a future cleanup.
+
+- **The agenda was dropping events that had already started.** It filtered on
+  `starts_at >= today`, which answers what *begins* today rather than what
+  *touches* it, so a week-long holiday appeared on its first morning and then
+  vanished for six days - while the grids, which have always used a proper
+  overlap, kept showing it. The two predicates were the same rule written twice,
+  and the grid's own comment already said why the other form was wrong. Fixing
+  it and de-duplicating it was one change.
+- **A moved recurring occurrence corrupted the events table.** A series and its
+  `RECURRENCE-ID` overrides share a UID, and the last component seen won - so
+  moving one soccer practice replaced the series' stored VEVENT with that single
+  Thursday and orphaned the row holding the RRULE. Invisible on the panel, because
+  the expansion has already happened; it cost `raw_vevent` and the `--find`
+  diagnostic, which reported `recurring=False` for exactly the events somebody
+  would run it on.
+- **A weather response that was not JSON stopped the container from starting.**
+  `except httpx.HTTPError` does not catch a decode failure, and 200-with-HTML is
+  what a captive portal answers. The lifespan awaited it, so the whole app went
+  down over the weather widget.
+- **The panel could come up blank and stay blank.** All five opening fetches were
+  unhandled rejections with nothing left to retry, and once the backend arrived
+  the SSE stream connected happily - so the staleness watchdog, which only fires
+  on a *quiet* stream, had nothing to react to. Verified by refusing `/api/**` in
+  real Chrome and then releasing it: masthead-only to a full month grid, on its
+  own, with nobody touching it.
+- **`api/routes.py` was a 749-line god-module,** and the music half of it was
+  doing another layer's work. `jellyfin.py`'s docstring promised a `stream()` that
+  did not exist - the proxy had ended up in the route. It does now.
+- **The design layer had stopped at `.caps`.** `theme.css` argued that six private
+  copies of a rule would drift, and then `.passed`, the small caps run, the tab
+  and the round control were written out three, three, three and five times. They
+  had already drifted, and two button groups had lost their focus ring.
+- **The panel harness is in the repo now.** It lived in an untracked worktree, so
+  the one tool that can tell whether the display actually renders did not survive
+  a fresh clone. It also gained a calendar fixture, because a smoke run against an
+  empty database proves every view renders and says nothing about how an
+  appointment looks.
+- **The Alembic chain is tested.** Every other test builds its schema with
+  `create_all`, so the migrations were executed by exactly one thing: a container
+  booting against a family's live database.
+- **Ruff is configured** - `.gitignore` had listed `.ruff_cache/` since the first
+  commit and the source carried `# noqa` markers, so it was always the intention.
+  Narrow on purpose; pyupgrade wanted eighty-nine rewrites of correct code and is
+  left out.
+
+Two things the review itself had missed turned up while writing tests for code it
+flagged: the audio proxy asked Jellyfin for gzip while forwarding bytes undecoded
+and stripping `Content-Encoding`, and the harness did not rebuild a stale
+frontend - so it could report confidently on code that was not the code being
+changed.
+
+529 backend tests became 583. Both gates stay green, and the panel was checked in
+real Chrome at both orientations at every step.
+
 ---
 
 ---

@@ -70,7 +70,9 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['member_id'], ['members.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_event_instances_starts_at'), 'event_instances', ['starts_at'], unique=False)
+    op.create_index(
+        op.f('ix_event_instances_starts_at'), 'event_instances', ['starts_at'], unique=False
+    )
     # ### end Alembic commands ###
 
 

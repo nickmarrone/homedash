@@ -20,7 +20,7 @@
 	     font being present - see TransportControls.svelte for the reasoning.
 	     Drawing them also means the stroke weight matches the back arrow in the
 	     music browser, which the character never could. -->
-	<button type="button" class="arrow" aria-label="Previous" onclick={onPrev}>
+	<button type="button" class="control-round arrow" aria-label="Previous" onclick={onPrev}>
 		<svg viewBox="0 0 24 24" aria-hidden="true">
 			<path
 				d="M15 5l-7 7 7 7"
@@ -32,8 +32,8 @@
 			/>
 		</svg>
 	</button>
-	<button type="button" class="today" onclick={onToday}>Today</button>
-	<button type="button" class="arrow" aria-label="Next" onclick={onNext}>
+	<button type="button" class="control-round today" onclick={onToday}>Today</button>
+	<button type="button" class="control-round arrow" aria-label="Next" onclick={onNext}>
 		<svg viewBox="0 0 24 24" aria-hidden="true">
 			<path
 				d="M9 5l7 7-7 7"
@@ -68,19 +68,10 @@
 	   panel that are pressed while looking at the calendar rather than at them,
 	   so they have to be findable - but a grey capsule each put three more
 	   filled shapes next to a month heading. */
+	/* The shape is .control-round in theme.css; the "Today" button is the one
+	   that carries words rather than a glyph, so it needs its own type. */
 	button {
-		display: grid;
-		place-items: center;
-		min-height: var(--tap);
-		min-width: var(--tap);
-		border: 1px solid var(--rule-strong);
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--ink-soft);
 		font: inherit;
-		cursor: pointer;
-		touch-action: manipulation;
-		-webkit-tap-highlight-color: transparent;
 	}
 
 	.arrow svg {

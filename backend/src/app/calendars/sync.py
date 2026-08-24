@@ -9,11 +9,11 @@ from sqlmodel import Session, select
 
 from app.calendars.base import CalendarSource as CalendarSourceProtocol
 from app.calendars.caldav_source import CalDAVCalendarSource
+from app.calendars.colors import color_for_index
 from app.calendars.google_auth import GoogleCredentials
 from app.calendars.google_source import GoogleCalendarSource
-from app.calendars.colors import color_for_index
-from app.calendars.localtime import as_utc
 from app.calendars.ics import ICSCalendarSource
+from app.calendars.localtime import as_utc
 from app.config import CalendarConfig, get_settings, source_key
 from app.models import CalendarSource, Event, EventInstance
 
@@ -208,6 +208,47 @@ def _occurrence_bounds(occurrence: VEvent) -> tuple[datetime, datetime, bool]:
     return starts_at, ends_at, True
 
 
+def _is_override(component) -> bool:
+    """Whether this VEVENT redefines one occurrence of a series rather than
+    describing the series itself. RFC 5545 says so with RECURRENCE-ID."""
+    return component.get("RECURRENCE-ID") is not None
+
+
+def _rows_to_store(vevents) -> dict:
+    """One VEVENT per UID: the series master, not one of its overrides.
+
+    A recurring series and every `RECURRENCE-ID` override of it share a single
+    UID. Storing a row for each and keying them by UID meant the last one seen
+    won - and the last one is an override, which carries no RRULE. So moving a
+    single soccer practice to Thursday replaced the series' stored VEVENT with
+    that one Thursday, left the row holding the actual RRULE orphaned with no
+    instances pointing at it, and grew the events table by one row per override
+    on every rebuild.
+
+    Nothing on the panel showed it, because the expansion has already happened
+    by this point and the instances were correct. What broke was everything
+    that reads `raw_vevent` afterwards: re-expanding the window without
+    re-fetching, which is the entire reason the column exists, and
+    `homedash-inspect-calendars --find`, which reported `recurring=False` for
+    precisely the events somebody would be running it on.
+
+    An override still wins if it is all the feed offers - a detached instance
+    with no master is better represented by itself than by nothing.
+    """
+    chosen: dict = {}
+    for vevent in vevents:
+        # A cancelled master gets no row at all. Its occurrences are dropped
+        # in any case; keeping the row would leave the events table claiming a
+        # calendar has something it does not.
+        if _is_cancelled(vevent):
+            continue
+        uid = str(vevent.get("UID"))
+        existing = chosen.get(uid)
+        if existing is None or (_is_override(existing) and not _is_override(vevent)):
+            chosen[uid] = vevent
+    return chosen
+
+
 def sync_window(now: datetime | None = None) -> tuple[datetime, datetime]:
     """The rolling range of time the panel materializes instances for."""
     now = now or datetime.now(timezone.utc)
@@ -324,13 +365,7 @@ def sync_source(session: Session, source: CalendarSource) -> bool:
     _delete_source_events(session, source.id)
 
     events_by_uid: dict[str, Event] = {}
-    for vevent in vevents:
-        # A cancelled master gets no row at all. Its occurrences are dropped
-        # below in any case; keeping the row would leave the events table
-        # claiming a calendar has something it does not.
-        if _is_cancelled(vevent):
-            continue
-        uid = str(vevent.get("UID"))
+    for uid, vevent in _rows_to_store(vevents).items():
         event = Event(
             source_id=source.id,
             uid=uid,

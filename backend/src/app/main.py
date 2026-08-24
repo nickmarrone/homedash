@@ -8,9 +8,9 @@ from sqlmodel import Session
 
 from app.api.routes import router
 from app.calendars.sync import seed_calendars_from_settings
-from app.devices import seed_device_from_settings
 from app.config import get_settings
 from app.db import engine, run_migrations
+from app.devices import seed_device_from_settings
 from app.music.service import start_music, stop_music
 from app.photos.observer import start_folder_watch
 from app.scheduler import run_photo_index, start_scheduler, stop_scheduler
@@ -21,6 +21,22 @@ logging.basicConfig(level=logging.INFO)
 settings = get_settings()
 
 
+async def _warm_weather_cache() -> None:
+    """Fill the weather cache before the first panel connects, without ever
+    being able to stop the app from starting.
+
+    `refresh_weather` returns False rather than raising for everything it
+    anticipates, so this guard is for what it does not: nothing about the
+    weather is worth trading the calendar, the photos and the bedtime schedule
+    for, and a lifespan that raises takes all of them down. The scheduled
+    refresh is already guarded this way - startup was the one path that was not.
+    """
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, refresh_weather)
+    except Exception:
+        logging.getLogger(__name__).exception("Weather fetch failed during startup")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     run_migrations()
@@ -28,7 +44,7 @@ async def lifespan(app: FastAPI):
         seed_calendars_from_settings(session)
         seed_device_from_settings(session)
     broadcaster.bind_loop(asyncio.get_running_loop())
-    await asyncio.get_running_loop().run_in_executor(None, refresh_weather)
+    await _warm_weather_cache()
     start_scheduler()
     # After the scheduler, so the first full scan is already queued: the watch
     # only reports what changes from here on, and a folder that was filled while
