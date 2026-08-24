@@ -7,6 +7,29 @@ This is a health check, not a bug report — nothing was known to be broken when
 It exists because the codebase has grown fast through four phases plus the music feature,
 and is about to take on the Immich photo source.
 
+> **Everything below was acted on**, in the thirteen commits following the one that added
+> this file. The findings are kept in full rather than trimmed to what remains, because the
+> reasoning is the useful part — several of these are decisions that should be re-argued
+> rather than silently reverted, and the "not worth extracting" section exists to be quoted
+> back at a future cleanup.
+>
+> What changed as a result:
+>
+> | Area | Then | Now |
+> |---|---|---|
+> | Backend tests | 529 | 583 |
+> | Frontend tests | none in the repo | the Playwright harness is tracked, plus a calendar fixture |
+> | Linter | none configured | ruff, clean |
+> | `api/routes.py` | 749 lines, one module | five routers, largest 375 |
+> | `+page.svelte` | 589 lines, six state domains | 564, with music extracted |
+> | Duplicated CSS rules | `.passed` ×3, caps ×3, tab ×3, round control ×5 | one definition each |
+>
+> Two things turned up that this review had not found, both while writing tests for code it
+> flagged. The audio proxy asked Jellyfin for gzip and forwarded the bytes undecoded without
+> a `Content-Encoding`, so a server that compressed would have handed the speaker unplayable
+> audio. And the panel harness did not rebuild a stale frontend, so it could report
+> confidently on code that was not the code being changed.
+
 ---
 
 ## Verdict
