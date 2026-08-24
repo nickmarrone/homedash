@@ -227,8 +227,54 @@ class HeosController:
         HomeDash one, and one that presents as the speaker simply ignoring the
         command. It is checked where the URL is built (`music.tokens`), which
         is the only place that can do anything about it.
+
+        **This appends to the speaker's own queue**, which is not obvious and
+        cost this feature a bug - see `prune_queue`.
         """
         await self._player(player_id).play_url(url)
+
+    # -- the speaker's own queue -------------------------------------------
+    #
+    # HomeDash holds the album, but the speaker keeps a queue of its own and
+    # `play_url` writes to it. That is the whole reason these two exist: an
+    # album left one dead HomeDash URL per track sitting in the speaker, and
+    # nothing ever took them out again.
+
+    async def clear_queue(self, player_id: int) -> None:
+        """Empty the speaker's queue.
+
+        Sent when a HomeDash queue ends, so the speaker is handed back in the
+        state it was found in rather than parked on a stream that has finished
+        and a list of URLs that no longer resolve. HEOS answers an error when
+        the queue is already empty, so callers treat this as best-effort.
+        """
+        await self._player(player_id).clear_queue()
+
+    async def prune_queue(self, player_id: int) -> None:
+        """Drop every queue entry except the one the speaker is playing.
+
+        Called once a track is confirmed playing, which is the earliest moment
+        the speaker can say *which* entry that is. Without it the queue grows
+        by one per track for the length of an album and every entry outlives
+        the stream it points at.
+
+        Pruning rather than clearing, because clearing a queue that has
+        something playing in it can stop the music - `player/clear_queue`
+        raises Player State Changed as well as Player Queue Changed.
+
+        A speaker that reports no queue id is left alone. That is the safe
+        direction: the alternative reading of "no current entry" is that every
+        entry is stale, which would delete the track that is playing.
+        """
+        player = self._player(player_id)
+        media = player.now_playing_media
+        current = media.queue_id if media is not None else None
+        if current is None:
+            return
+        stale = [item.queue_id for item in await player.get_queue() if item.queue_id != current]
+        if stale:
+            logger.debug("Removing %d stale queue entries from player %d", len(stale), player_id)
+            await player.remove_from_queue(stale)
 
 
 def _state_of(player: HeosPlayer) -> str:

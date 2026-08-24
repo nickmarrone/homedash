@@ -149,3 +149,82 @@ def test_connecting_loads_the_player_list():
 
     assert heos.load_count == 1, "connecting must ask for the player list"
     assert [p["id"] for p in controller.players()] == [1, 2]
+
+
+class TestTheSpeakersOwnQueue:
+    """`play_url` appends to it, which is the fact this whole pair exists for.
+
+    HEOS's `browse/play_stream` is not a fire-and-forget "play this URL": it
+    puts the URL in the player's queue and plays that entry. Driving an album
+    one track at a time therefore fills the speaker with dead HomeDash URLs
+    unless something takes them out again, and nothing did.
+    """
+
+    def test_playing_a_url_lands_in_the_speakers_queue(self):
+        """The behaviour the fake reproduces, asserted here so that a fake
+        rewritten to be convenient cannot quietly take the bug back."""
+        controller, heos = build()
+        asyncio.run(controller.play_url(1, "http://homedash/api/music/s/abc"))
+        assert [item.song for item in heos.players[1].queue] == [
+            "http://homedash/api/music/s/abc"
+        ]
+
+    def test_pruning_keeps_only_the_entry_that_is_playing(self):
+        controller, heos = build()
+        for track in ("a", "b", "c"):
+            asyncio.run(controller.play_url(1, f"http://homedash/api/music/s/{track}"))
+        assert len(heos.players[1].queue) == 3
+
+        asyncio.run(controller.prune_queue(1))
+
+        assert [item.song for item in heos.players[1].queue] == [
+            "http://homedash/api/music/s/c"
+        ]
+
+    def test_pruning_sends_nothing_when_there_is_nothing_stale(self):
+        """It runs on every track of every album, so the common case must not
+        be a command to the speaker for no reason."""
+        controller, heos = build()
+        asyncio.run(controller.play_url(1, "http://homedash/api/music/s/a"))
+        heos.players[1].calls.clear()
+
+        asyncio.run(controller.prune_queue(1))
+
+        assert [call[0] for call in heos.players[1].calls] == ["get_queue"]
+
+    def test_a_speaker_reporting_no_current_entry_is_left_alone(self):
+        """The safe reading of "nothing is playing from the queue".
+
+        The other one - that every entry is therefore stale - would delete the
+        track the speaker is on, and a speaker on an input or a service with no
+        queue of its own reports exactly this.
+        """
+        controller, heos = build()
+        asyncio.run(controller.play_url(1, "http://homedash/api/music/s/a"))
+        heos.players[1].now_playing_media.queue_id = None
+
+        asyncio.run(controller.prune_queue(1))
+
+        assert len(heos.players[1].queue) == 1
+
+    def test_a_speaker_with_nothing_playing_at_all_is_left_alone(self):
+        controller, heos = build([FakePlayer(now_playing_media=None)])
+        asyncio.run(controller.prune_queue(1))
+        assert heos.players[1].calls == []
+
+    def test_clearing_empties_the_queue(self):
+        controller, heos = build()
+        asyncio.run(controller.play_url(1, "http://homedash/api/music/s/a"))
+
+        asyncio.run(controller.clear_queue(1))
+
+        assert heos.players[1].queue == []
+
+    def test_clearing_an_empty_queue_raises_and_is_left_to_the_caller(self):
+        """HEOS answers an error rather than a no-op, so somebody has to
+        swallow it. `music/service.py` does, because "the queue was already
+        empty" must never fail a stop the user asked for - but the controller
+        stays a thin mapping onto the protocol and reports what happened."""
+        controller, _ = build()
+        with pytest.raises(RuntimeError):
+            asyncio.run(controller.clear_queue(1))
