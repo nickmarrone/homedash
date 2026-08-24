@@ -574,7 +574,8 @@ single-calendar panel, where the legend renders nothing at all.
 | `api.ts` | **All** types, all fetchers, and the SSE subscriber |
 | `theme.css` | The whole design layer: `@font-face`, the colour tokens, the `.caps` label class. Imported once from `+layout.svelte` |
 | `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour`, `formatMasthead`, `hasPassed`, `formatSkyDate`, `addDays` |
-| `watchdog.ts` | Reloads the page if the SSE stream goes quiet |
+| `watchdog.ts` | Reloads the page if the SSE stream goes quiet, or on a fatal stream error |
+| `retry.ts` | Backoff for a load that failed, so a panel that started before the backend heals itself |
 | `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
@@ -692,6 +693,35 @@ too, and the whole strip is one pointer-captured gesture. Letters with nothing b
 stay in place, dimmed, and jump to the next letter that does have something: a rail whose
 letters move as the library grows is one you have to read instead of aim at. It appears
 only above 20 artists, and only on the artists level.
+
+### When the backend is not there yet
+
+The Pi boots faster than the container, so the panel's opening round of fetches
+routinely happens against a backend that is still starting. Every one of them used
+to be an unhandled rejection, and nothing was left behind to try again: the masthead
+painted, `grid` stayed null so the entire calendar body was absent, and `loadPhotos`
+rejected before it could start the idle timer, so the screensaver could not appear
+either. Once the backend arrived the SSE stream connected perfectly happily — and
+because the stream was *healthy*, the staleness watchdog had nothing to react to. The
+panel sat on a date and an empty page indefinitely.
+
+Two things close it, and they are deliberately independent:
+
+- **Every fetch goes through `reloadEverything` or `guard`** in `+page.svelte`. A round
+  with any rejection arms `retry.ts`'s backoff — 1s, 2s, 5s, 10s, then every 30s —
+  which re-runs the whole round until one comes back clean. Backoff rather than a fixed
+  interval because "still booting" and "down for the evening" look identical from the
+  browser and want opposite things.
+- **`subscribeToUpdates` now has an `error` listener.** `EventSource` reports both of its
+  failure modes through that one event and they need opposite responses: a dropped
+  connection leaves `readyState` at CONNECTING and the browser retries by itself, while a
+  non-2xx status or wrong `Content-Type` — a proxy answering 502 through a redeploy — is
+  fatal per spec and nothing will ever reopen it. The fatal case calls
+  `watchdog.reloadNow()`, which shares the staleness check's own reload throttle so a
+  backend that is simply down cannot put the panel in a reload loop.
+
+Verified by driving real Chrome with `/api/**` refused, then releasing it: the panel
+recovers on its own, with no reload and nobody touching it.
 
 ### Orientation
 

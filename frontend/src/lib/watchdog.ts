@@ -50,6 +50,15 @@ function writeLastReload(at: number): void {
 export interface Watchdog {
 	/** Call on every message from the stream. */
 	notify: () => void;
+	/** Reload now, subject to the same throttle the staleness check uses.
+	 *
+	 * For a caller that already knows the stream is dead rather than merely
+	 * quiet - a fatal EventSource error closes it for good, and waiting out
+	 * the full stale window to discover that only delays the fix. Sharing the
+	 * throttle is the point: a backend that is down would otherwise trade the
+	 * quiet-stream reload loop this module was written to prevent for an
+	 * error-driven one. */
+	reloadNow: () => void;
 	stop: () => void;
 }
 
@@ -77,21 +86,25 @@ export function startWatchdog(options: WatchdogOptions = {}): Watchdog {
 	// treated like any other gap and the page cannot reload the instant it opens.
 	let lastMessageAt = now();
 
-	const timer = setInterval(() => {
+	function reloadIfAllowed(): void {
 		const at = now();
-		if (at - lastMessageAt < staleAfterMs) return;
-
 		const lastReloadAt = readLastReloadAt();
 		if (lastReloadAt !== 0 && at - lastReloadAt < minReloadIntervalMs) return;
 
 		writeLastReloadAt(at);
 		reload();
+	}
+
+	const timer = setInterval(() => {
+		if (now() - lastMessageAt < staleAfterMs) return;
+		reloadIfAllowed();
 	}, checkEveryMs);
 
 	return {
 		notify: () => {
 			lastMessageAt = now();
 		},
+		reloadNow: reloadIfAllowed,
 		stop: () => clearInterval(timer)
 	};
 }

@@ -379,6 +379,11 @@ export interface UpdateStreamHandlers {
 	onReconnect?: () => void;
 	/** Called on every message of any kind, for the staleness watchdog. */
 	onMessage?: () => void;
+	/** The stream errored. `fatal` distinguishes the two cases EventSource
+	 * treats very differently: it retries a dropped connection on its own, but
+	 * a non-2xx status or a wrong Content-Type closes the stream for good and
+	 * it will never come back by itself. */
+	onError?: (fatal: boolean) => void;
 }
 
 /** Subscribes to the backend's SSE stream. Returns an unsubscribe function. */
@@ -411,6 +416,21 @@ export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 		handlers.onMessage?.();
 		if (hasConnected) handlers.onReconnect?.();
 		hasConnected = true;
+	});
+
+	source.addEventListener('error', () => {
+		// EventSource reports both of its failure modes through this one
+		// event, and they need opposite responses. A dropped connection leaves
+		// readyState CONNECTING and the browser retries by itself. A non-2xx
+		// status or a wrong Content-Type - a proxy answering 502 through a
+		// redeploy, say - is fatal per spec: readyState goes to CLOSED and
+		// nothing will ever reopen it. That case used to be entirely silent,
+		// leaving the staleness watchdog as the only thing that would ever
+		// notice, a hundred seconds later and with no way to tell it apart
+		// from a real outage.
+		const fatal = source.readyState === EventSource.CLOSED;
+		console.warn(fatal ? 'HomeDash: SSE stream closed for good' : 'HomeDash: SSE stream dropped');
+		handlers.onError?.(fatal);
 	});
 
 	return () => source.close();

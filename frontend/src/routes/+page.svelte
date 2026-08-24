@@ -25,6 +25,7 @@
 	import { createOrientation } from '$lib/orientation.svelte';
 	import { startIdleTimer, type IdleTimer } from '$lib/idle';
 	import { startWatchdog } from '$lib/watchdog';
+	import { startBackoff } from '$lib/retry';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
 	import { loadPlayerId, pickPlayer, savePlayerId } from '$lib/musicPreference';
@@ -137,13 +138,12 @@
 		view = next;
 		anchor = null;
 		saveView(next);
-		if (next === 'agenda') loadAgenda();
-		else loadGrid();
+		guard(next === 'agenda' ? loadAgenda() : loadGrid());
 	}
 
 	function goTo(next: string | null) {
 		anchor = next;
-		loadGrid();
+		guard(loadGrid());
 	}
 
 	async function loadAgenda() {
@@ -246,25 +246,47 @@
 		idleTimer?.notify();
 	}
 
-	function loadEvents() {
+	function loadEvents(): Promise<unknown> {
 		// In portrait both are on screen at once, so both are fetched. The two
 		// endpoints answer different questions - the grid covers the period
 		// being navigated, the agenda is always "what is coming up next" - so
 		// one cannot be derived from the other.
-		if (view === 'agenda') loadAgenda();
-		else {
-			loadGrid();
-			if (orientation.isPortrait) loadAgenda();
-		}
+		if (view === 'agenda') return loadAgenda();
+		return Promise.all([loadGrid(), orientation.isPortrait ? loadAgenda() : null]);
 	}
 
-	function reloadEverything() {
-		loadEvents();
-		loadCalendars();
-		loadWeather();
-		loadPhotos();
-		loadMusic();
+	// Every fetch in this file goes through here or through `guard` below.
+	// A loader that rejects with nobody watching is not just a lost update: on
+	// a cold start it is the whole panel, permanently, because the SSE
+	// watchdog only fires on a *quiet* stream and a backend that has since
+	// come up keeps the stream perfectly healthy. See lib/retry.ts.
+	async function reloadEverything(): Promise<void> {
+		const results = await Promise.allSettled([
+			loadEvents(),
+			loadCalendars(),
+			loadWeather(),
+			loadPhotos(),
+			loadMusic()
+		]);
+		const failed = results.filter((r) => r.status === 'rejected');
+		if (failed.length === 0) {
+			backoff.succeed();
+			return;
+		}
+		console.warn(`HomeDash: ${failed.length} of ${results.length} loads failed; retrying`);
+		backoff.fail();
 	}
+
+	/** For the one-off loads a tap triggers. A single failure arms the same
+	 * retry as a failed round, which reloads everything - blunter than
+	 * reissuing just this fetch, and correct for the reason that made it fail. */
+	function guard(load: Promise<unknown>): void {
+		load.catch(() => backoff.fail());
+	}
+
+	const backoff = startBackoff(() => {
+		reloadEverything();
+	});
 
 	function onHeartbeat(heartbeat: Heartbeat) {
 		// Every 30 seconds, which is the resolution at which an event stops
@@ -297,11 +319,7 @@
 		hiddenCalendars = loadHidden();
 		view = loadView();
 		selectedPlayerId = loadPlayerId();
-		loadEvents();
-		loadCalendars();
-		loadWeather();
-		loadPhotos();
-		loadMusic();
+		reloadEverything();
 
 		const watchdog = startWatchdog();
 
@@ -311,21 +329,30 @@
 			// The stream dropped and came back, so anything could have changed
 			// while it was gone.
 			onReconnect: reloadEverything,
+			onError: (fatal) => {
+				// A dropped stream reopens by itself, and the watchdog covers
+				// it going quiet. A *closed* one never reopens, so the page has
+				// to be replaced - and the watchdog's own reload throttle is
+				// what stops this becoming a loop against a backend that is
+				// simply down.
+				if (fatal) watchdog.reloadNow();
+			},
 			onEvent: (eventType) => {
 				// Calendars are reloaded too: a config change adds or removes a
 				// source, and the legend must follow without a page reload.
 				if (eventType === 'events.updated') {
-					loadEvents();
-					loadCalendars();
+					guard(loadEvents());
+					guard(loadCalendars());
 				}
-					if (eventType === 'weather.updated') loadWeather();
-					if (eventType === 'photos.updated') loadPhotos();
-					if (eventType === 'music.updated') loadMusic();
+				if (eventType === 'weather.updated') guard(loadWeather());
+				if (eventType === 'photos.updated') guard(loadPhotos());
+				if (eventType === 'music.updated') guard(loadMusic());
 			}
 		});
 
 		return () => {
 			watchdog.stop();
+			backoff.stop();
 			idleTimer?.stop();
 			unsubscribe();
 		};
