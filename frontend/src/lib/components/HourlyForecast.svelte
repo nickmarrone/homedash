@@ -21,8 +21,15 @@
 		// own clock and OS timezone out of it entirely - same reasoning as the
 		// wall-clock parsing in lib/format.ts.
 		const nowHour = weather?.current?.time?.slice(0, 13);
-		const found = nowHour ? times.findIndex((time) => time.slice(0, 13) >= nowHour) : 0;
-		const start = found > 0 ? found : 0;
+		const start = nowHour ? times.findIndex((time) => time.slice(0, 13) >= nowHour) : 0;
+		// findIndex answers -1 when every hour in the payload is already past,
+		// which happens when the weather job has been failing for a while and
+		// the cache is being served anyway. Folding that into 0 rendered the
+		// beginning of a stale window with its first column labelled "Now" -
+		// yesterday afternoon's forecast, presented as the current hour.
+		// Showing nothing is the honest answer, and matches what this strip
+		// already does before the first fetch lands.
+		if (start < 0) return [];
 
 		return times.slice(start, start + HOURS).map((time, i) => {
 			const temp = hourly?.temperature_2m?.[start + i];

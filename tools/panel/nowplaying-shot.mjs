@@ -98,9 +98,18 @@ for (const [label, viewport] of [
     if (url.pathname === '/api/weather') {
       return route.fulfill({ json: { current: null, daily: [], hourly: [] } });
     }
+    if (url.pathname === '/api/events/stream') {
+      // A real content type, even though this stub sends no events. Answering
+      // the stream with application/json like everything else is fatal to an
+      // EventSource - readyState goes to CLOSED and the panel correctly
+      // decides its stream will never come back and reloads the page. That is
+      // the panel working; it was this fixture that was wrong. The old
+      // `**/api/events` route never matched the real path, so it fell through
+      // to the JSON catch-all below.
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' });
+    }
     return route.fulfill({ json: {} });
   });
-  await page.route('**/api/events', (route) => route.abort());
 
   await page.goto(base, { waitUntil: 'networkidle' });
   await page.waitForTimeout(800);

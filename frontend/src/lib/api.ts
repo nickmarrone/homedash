@@ -429,7 +429,11 @@ export function subscribeToUpdates(handlers: UpdateStreamHandlers): () => void {
 		// notice, a hundred seconds later and with no way to tell it apart
 		// from a real outage.
 		const fatal = source.readyState === EventSource.CLOSED;
-		console.warn(fatal ? 'HomeDash: SSE stream closed for good' : 'HomeDash: SSE stream dropped');
+		// Only the fatal case is worth saying out loud. An ordinary drop is
+		// routine on a page that stays open for months - any proxy timeout does
+		// it - and the browser reopens it without help, so logging those would
+		// bury the one that matters in a month of noise.
+		if (fatal) console.warn('HomeDash: SSE stream closed for good; reloading');
 		handlers.onError?.(fatal);
 	});
 

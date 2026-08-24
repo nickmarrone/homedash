@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import type { MusicPlayer, TransportAction } from '$lib/api';
 	import MusicBrowser from './MusicBrowser.svelte';
 	import NowPlaying from './NowPlaying.svelte';
@@ -49,19 +50,76 @@
 		chosenTab = 'now';
 	}
 
-	/** The slider's own position while a finger is on it.
+	/** At most one volume command per this long while a finger is moving.
+	 *
+	 * `oninput` fires on every value change, so a drag from 20 to 70 is around
+	 * fifty of them. Sending each one meant fifty POSTs and fifty refetches in
+	 * under a second, from a Pi over wifi, each forwarded to the speaker over
+	 * its own TCP control connection - audible stepping at best, and a backed
+	 * up HEOS connection at worst. The slider itself still tracks the finger
+	 * at full rate; only the network is rationed. */
+	const SEND_EVERY_MS = 120;
+
+	/** How long the slider keeps showing the value the finger left it on.
+	 *
+	 * Long enough for the command and the refetch behind it to land. Clearing
+	 * on release instead put the snap-back at the *end* of the gesture that
+	 * `dragging` exists to prevent during it: `player.volume` is still the old
+	 * value until the round trip completes, so the thumb jumped back to where
+	 * the drag started and then forward again. */
+	const SETTLE_MS = 1_000;
+
+	/** The slider's own position while a finger is on it - and briefly after.
 	 *
 	 * Without this the value snaps back mid-drag: every volume change publishes
 	 * a HEOS event, the panel refetches, and the incoming `player.volume` would
-	 * overwrite where the finger actually is. Cleared on release, so the
-	 * speaker becomes the source of truth again the moment the drag ends. */
+	 * overwrite where the finger actually is. */
 	let dragging = $state<number | null>(null);
 	const volume = $derived(dragging ?? player.volume);
 
-	function commit(value: number) {
-		dragging = value;
+	let sendTimer: ReturnType<typeof setTimeout> | null = null;
+	let settleTimer: ReturnType<typeof setTimeout> | null = null;
+	let unsent: number | null = null;
+
+	function send(value: number) {
+		unsent = null;
 		onVolume(value);
 	}
+
+	function commit(value: number) {
+		dragging = value;
+		if (settleTimer !== null) {
+			clearTimeout(settleTimer);
+			settleTimer = null;
+		}
+		if (sendTimer !== null) {
+			// Already sent one recently: remember this and let the timer send it.
+			unsent = value;
+			return;
+		}
+		send(value);
+		sendTimer = setTimeout(() => {
+			sendTimer = null;
+			if (unsent !== null) commit(unsent);
+		}, SEND_EVERY_MS);
+	}
+
+	function release(value: number) {
+		// The last position always reaches the speaker, whatever the throttle
+		// was in the middle of - letting a drag end on a value that was never
+		// sent is the one outcome nobody would forgive.
+		send(value);
+		if (settleTimer !== null) clearTimeout(settleTimer);
+		settleTimer = setTimeout(() => {
+			settleTimer = null;
+			dragging = null;
+		}, SETTLE_MS);
+	}
+
+	onDestroy(() => {
+		if (sendTimer !== null) clearTimeout(sendTimer);
+		if (settleTimer !== null) clearTimeout(settleTimer);
+	});
 </script>
 
 <!-- A state inside the SPA, never a route: in locked mode the Chromium
@@ -129,8 +187,7 @@
 					value={volume}
 					style:--filled={`${volume}%`}
 					oninput={(event) => commit(Number(event.currentTarget.value))}
-					onchange={() => (dragging = null)}
-					onpointerup={() => (dragging = null)}
+					onchange={(event) => release(Number(event.currentTarget.value))}
 				/>
 				<span class="level">{volume}</span>
 			</label>

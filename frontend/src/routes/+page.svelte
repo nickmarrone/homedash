@@ -231,7 +231,16 @@
 		restartIdleTimer(next.idle_minutes);
 	}
 
+	// The timeout the running timer was built with, so an unchanged one can be
+	// left alone. Restarting resets "last activity" to now, and this runs on
+	// every reload - so flaky wifi reconnecting the stream every few minutes
+	// against a five-minute threshold kept pushing idleness out of reach and
+	// the screensaver simply never appeared, with nothing logged anywhere.
+	let idleMinutesInUse: number | null = null;
+
 	function restartIdleTimer(idleMinutes: number) {
+		if (idleTimer !== null && idleMinutes === idleMinutesInUse) return;
+		idleMinutesInUse = idleMinutes;
 		idleTimer?.stop();
 		idleTimer = startIdleTimer({
 			idleAfterMs: Math.max(1, idleMinutes) * 60_000,
@@ -298,7 +307,17 @@
 		// The schedule is the server's to decide, for the same reason the date
 		// is: the panel's own clock is not trusted anywhere in this app. An
 		// older backend omits the field, in which case the panel stays lit.
+		const wasOn = screenOn;
 		screenOn = heartbeat.screen !== 'off';
+		if (!wasOn && screenOn) {
+			// Coming back from bedtime. The idle timer kept running behind the
+			// blank all night, so `idle` is long since true and the panel would
+			// otherwise wake straight into the slideshow - the first thing on
+			// the wall in the morning being photos, with the day's calendar one
+			// tap away behind them. Start the day on the calendar.
+			idle = false;
+			idleTimer?.notify();
+		}
 
 		if (serverToday === heartbeat.today) return;
 		const rolledOver = serverToday !== null;

@@ -95,6 +95,14 @@ for (const [label, viewport] of [
 
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/events/stream') {
+      // A real content type, even though this stub sends no events. Answering
+      // the stream with application/json like everything else is fatal to an
+      // EventSource - readyState goes to CLOSED and the panel correctly
+      // decides its stream will never come back and reloads the page. That is
+      // the panel working; it was this fixture that was wrong.
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' });
+    }
     if (url.pathname === '/api/music/library') {
       const kind = url.searchParams.get('kind');
       const items = kind === 'artists' ? ARTISTS : [];
@@ -110,7 +118,6 @@ for (const [label, viewport] of [
     if (body) return route.fulfill({ json: body });
     return route.fulfill({ json: {} });
   });
-  await page.route('**/api/events', (route) => route.abort());
 
   await page.goto(base, { waitUntil: 'networkidle' });
   await page.waitForTimeout(800);
