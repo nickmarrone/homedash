@@ -179,7 +179,7 @@ files, so per-row unlinking would blank the surviving copy.
 | `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
 | `jellyfin.py` | `JellyfinLibrary`: browse three levels, and where the audio lives |
 | `tokens.py` | Short opaque stream tokens, and the 255-character check |
-| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold |
+| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the stop that ends it |
 | `service.py` | The process-wide singletons, and the switches that decide they exist |
 
 `queue.py` is the only module that knows about both halves — `heos.py` and
@@ -198,6 +198,20 @@ nothing and cost an inbound HTTP surface.
 keepalive, reconnect with backoff, and demultiplexing unsolicited events from
 command responses. Same trade as `recurring-ical-events` in Phase 1, and it has
 no transitive dependencies.
+
+**`connected` means connected now.** It used to be `self._heos is not None`, which only ever
+meant "has connected at some point" — pyheos reconnects underneath the controller without
+clearing the handle, so a system that dropped off wifi during the evening kept answering
+True. The panel switches on that field to decide whether the music UI is healthy, so it went
+on offering buttons whose commands could only fail. It now reads pyheos's own
+`connection_state`, and RECONNECTING counts as not connected: it resolves itself in seconds,
+but until it does a command sent now will not arrive.
+
+Reads and writes still degrade differently and deliberately: `/api/music/players` answers 200
+with `connected: false`, because a cold start is ordinary and the panel needs something to
+render. A command answers 503 (nothing to send it down), 502 (the speaker refused it) or 404
+(no such speaker) — never a 200 the speaker never heard, and no longer a 500, which is what
+everything but `KeyError` used to produce.
 
 **This is the first long-lived outbound connection in the app.** Everything
 else reaches the network on an interval, fetches, and lets go. That is why it

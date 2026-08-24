@@ -19,6 +19,8 @@ from app.music.heos import HeosController
 from app.music.jellyfin import JellyfinError
 from app.music.queue import QueueManager
 from app.music.tokens import TokenStore
+from pyheos import CommandFailedError, ConnectionState
+
 from fake_heos import FakeHeos, FakePlayer
 
 
@@ -484,9 +486,17 @@ def _start_music_with(monkeypatch, **overrides):
     HeosController is replaced wholesale: this is about what start_music
     decides, and building a real one would start an asyncio task looking for a
     speaker that is not there.
+
+    start_music assigns four module globals, so they are restored afterwards.
+    Nothing depends on that today - every route test patches `get_controller`
+    directly - but leaving a _NullController installed process-wide is the kind
+    of residue that makes some future test pass or fail depending on the order
+    pytest happened to collect it in.
     """
     from app.music import service
 
+    for name in ("_controller", "_library", "_tokens", "_queues"):
+        monkeypatch.setattr(service, name, getattr(service, name), raising=False)
     for key, value in overrides.items():
         monkeypatch.setattr(service.settings, key, value)
     monkeypatch.setattr(service, "HeosController", lambda *a, **k: _NullController())
@@ -536,3 +546,87 @@ def test_a_configured_deployment_logs_that_it_is_starting(monkeypatch, caplog):
 
     assert "192.168.4.212" in caplog.text
     assert "transport only" in caplog.text
+
+
+class TestASpeakerThatHasGoneAway:
+    """What the API says when the speakers are not reachable.
+
+    `connected` used to mean "has connected at some point" - pyheos reconnects
+    underneath the controller without ever clearing the handle, so a system
+    that dropped off wifi during the evening went on answering True. The panel
+    switches on exactly that field to decide whether the music UI is healthy,
+    so it kept offering buttons whose commands could only fail - and the
+    failure was a 500 with a stack trace, because the routes caught nothing
+    but KeyError.
+    """
+
+    def test_a_dropped_connection_is_not_reported_as_connected(self):
+        controller, heos = connected_controller()
+        assert controller.connected is True
+
+        heos.connection_state = ConnectionState.DISCONNECTED
+
+        assert controller.connected is False
+
+    def test_reconnecting_is_not_connected_either(self):
+        """It resolves itself within seconds, but until it does a command sent
+        now will not arrive - and that is the question being asked."""
+        controller, heos = connected_controller()
+        heos.connection_state = ConnectionState.RECONNECTING
+
+        assert controller.connected is False
+
+    def test_the_players_endpoint_reports_it_rather_than_erroring(self):
+        """A read stays a 200 while the speakers are away, which is what lets
+        the panel tell 'no speakers right now' from 'no music here at all'."""
+        controller, heos = connected_controller()
+        client, monkey = make_client(controller=controller)
+        heos.connection_state = ConnectionState.DISCONNECTED
+        try:
+            payload = client.get("/api/music/players").json()
+        finally:
+            monkey.undo()
+
+        assert payload["connected"] is False
+
+    def test_a_command_to_an_away_speaker_is_503_not_500(self):
+        """A write does not get to pretend. 503 rather than an unhandled
+        exception, and rather than a 200 the speaker never heard."""
+        controller, heos = connected_controller()
+        client, monkey = make_client(controller=controller)
+        heos.connection_state = ConnectionState.DISCONNECTED
+        try:
+            response = client.post("/api/music/players/1/transport", json={"action": "play"})
+        finally:
+            monkey.undo()
+
+        assert response.status_code == 503
+
+    def test_a_refused_command_is_502(self, monkeypatch):
+        """The speaker is reachable but will not do it - failing firmware, or a
+        verb it does not support. Upstream's fault, so 502; not ours, so not
+        500; not the caller's, so not 4xx."""
+        controller, _ = connected_controller()
+
+        async def refuse(player_id, action):
+            raise CommandFailedError("player/set_play_state", "boom", 1, 2)
+
+        monkeypatch.setattr(controller, "transport", refuse)
+        client, monkey = make_client(controller=controller)
+        try:
+            response = client.post("/api/music/players/1/transport", json={"action": "play"})
+        finally:
+            monkey.undo()
+
+        assert response.status_code == 502
+
+    def test_an_unknown_player_is_still_404(self):
+        """The one failure here that really is the caller's fault."""
+        controller, _ = connected_controller()
+        client, monkey = make_client(controller=controller)
+        try:
+            response = client.post("/api/music/players/99/transport", json={"action": "play"})
+        finally:
+            monkey.undo()
+
+        assert response.status_code == 404

@@ -40,6 +40,18 @@ def build(url_for=None):
     return manager, played
 
 
+def build_with_stops(url_for=None):
+    """As `build`, and also records which speakers were told to stop."""
+    manager, played = build(url_for)
+    stopped: list[int] = []
+
+    async def stop_player(player_id):
+        stopped.append(player_id)
+
+    manager.stop_player = stop_player
+    return manager, played, stopped
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -343,3 +355,68 @@ def test_two_speakers_do_not_wait_on_each_other():
         return played
 
     assert run(main()) == [(2, "http://h/b1"), (1, "http://h/a1")]
+
+
+class TestSkippingPastTheEnd:
+    """Skipping forward off the end of an album has to end the music.
+
+    The queue's own `remaining == 0` branch is reached two different ways and
+    they need opposite behaviour, which is what made this easy to get wrong.
+    When `on_state` reaches it the track has genuinely finished and the speaker
+    has already stopped itself. When `next` reaches it the speaker is still
+    playing the last track right now, and nothing else is going to stop it.
+    """
+
+    def test_the_speaker_is_told_to_stop(self):
+        """Otherwise the music plays on while the panel's queue display
+        vanishes and now-playing reverts to the speaker's own description of
+        the stream - a bitrate where the song title goes."""
+        manager, _, stopped = build_with_stops()
+        run(manager.start(1, album(2)))
+        run(manager.next(1))  # to the last track
+
+        run(manager.next(1))  # off the end
+
+        assert stopped == [1]
+
+    def test_the_queue_is_cleared(self):
+        manager, _, _ = build_with_stops()
+        run(manager.start(1, album(2)))
+        run(manager.next(1))
+
+        run(manager.next(1))
+
+        assert manager.current(1) is None
+
+    def test_no_further_track_is_sent(self):
+        manager, played, _ = build_with_stops()
+        run(manager.start(1, album(2)))
+        run(manager.next(1))
+        before = len(played)
+
+        run(manager.next(1))
+
+        assert len(played) == before
+
+    def test_skipping_within_the_album_stops_nothing(self):
+        """The guard against fixing this by stopping on every skip."""
+        manager, _, stopped = build_with_stops()
+        run(manager.start(1, album(3)))
+
+        run(manager.next(1))
+
+        assert stopped == []
+
+    def test_a_track_ending_naturally_does_not_send_a_stop(self):
+        """The same branch, reached from the speaker rather than from a finger.
+        Here it stopped by itself, and sending another one would be a command
+        issued for no reason - and, worse, one that arrives after whatever
+        somebody has started next."""
+        manager, _, stopped = build_with_stops()
+        run(manager.start(1, album(1)))
+        run(manager.on_state(1, "play"))
+
+        run(manager.on_state(1, "stop"))
+
+        assert stopped == []
+        assert manager.current(1) is None

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
+from pyheos import HeosError
 
 from app.api.serializers import serialize_instance
 from app.astro import astro_summary
@@ -25,7 +26,7 @@ from app.config import get_settings
 from app.db import get_session
 from app.devices import screen_state, touch_last_seen
 from app.models import CalendarSource, Device, Photo
-from app.music.heos import TRANSPORT_ACTIONS, HeosController
+from app.music.heos import TRANSPORT_ACTIONS, HeosController, MusicUnavailable
 from app.music.jellyfin import JellyfinError, JellyfinLibrary
 from app.music.service import (
     get_controller,
@@ -366,6 +367,24 @@ def _controller_or_503() -> HeosController:
     return controller
 
 
+def _speaker_command_failed(exc: Exception, player_id: int) -> HTTPException:
+    """Turn a failed speaker command into the status that describes it.
+
+    Only KeyError was handled before, so everything else - a speaker that has
+    dropped off wifi, a system mid-reconnect, a command the firmware refused -
+    escaped as a 500 with a stack trace. The panel hides that well: the button
+    simply does nothing.
+
+    None of these are the caller's fault, so none of them is a 4xx except the
+    one that genuinely is: asking for a speaker that is not there.
+    """
+    if isinstance(exc, KeyError):
+        return HTTPException(status_code=404, detail=f"no player with id {player_id}")
+    if isinstance(exc, MusicUnavailable):
+        return HTTPException(status_code=503, detail=str(exc) or "not connected to HEOS")
+    return HTTPException(status_code=502, detail=f"the speaker refused the command: {exc}")
+
+
 def _now_playing_from_track(track, reported: dict | None) -> dict:
     """What is playing, according to the side that actually knows.
 
@@ -466,8 +485,8 @@ async def post_music_transport(player_id: int, body: dict = Body(default={})) ->
             # way to the speaker finishes first - see app/music/queue.py.
             await queues.stop(player_id)
         await controller.transport(player_id, action)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
+    except (KeyError, MusicUnavailable, HeosError) as exc:
+        raise _speaker_command_failed(exc, player_id) from None
     return {"ok": True}
 
 
@@ -485,8 +504,8 @@ async def post_music_volume(player_id: int, body: dict = Body(default={})) -> di
     controller = _controller_or_503()
     try:
         await controller.set_volume(player_id, level)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"no player with id {player_id}") from None
+    except (KeyError, MusicUnavailable, HeosError) as exc:
+        raise _speaker_command_failed(exc, player_id) from None
     return {"ok": True}
 
 
@@ -569,7 +588,11 @@ async def get_music_art(item_id: str, size: int = Query(480)) -> Response:
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             upstream = await client.get(library.art_url(item_id, size), headers=library.headers)
-    except Exception:
+    except httpx.HTTPError:
+        # Narrow on purpose. `except Exception` here reported a TypeError in
+        # our own code as "could not reach Jellyfin", which is the exact
+        # confusion the 502-not-500 note above exists to prevent - and it sends
+        # somebody off to restart a server that was never the problem.
         raise HTTPException(status_code=502, detail="could not reach Jellyfin") from None
     if upstream.status_code != 200:
         # 404 rather than passing the upstream status through: a missing cover
@@ -675,7 +698,8 @@ async def get_music_stream(token: str, request: Request) -> StreamingResponse:
             "GET", library.stream_url(track_id), headers=headers
         )
         upstream = await client.send(upstream_request, stream=True)
-    except Exception:
+    except httpx.HTTPError:
+        # Narrow, for the reason given on the art proxy above.
         await client.aclose()
         raise HTTPException(status_code=502, detail="could not reach Jellyfin") from None
 

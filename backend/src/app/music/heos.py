@@ -25,7 +25,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from pyheos import Heos, HeosOptions, HeosPlayer, PlayState, SignalType
+from pyheos import ConnectionState, Heos, HeosOptions, HeosPlayer, PlayState, SignalType
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,20 @@ class HeosController:
 
     @property
     def connected(self) -> bool:
-        return self._heos is not None
+        """Whether commands can be expected to reach the speakers *now*.
+
+        `self._heos is not None` only ever meant "has connected at some point",
+        and pyheos reconnects underneath us without clearing it - so a system
+        that dropped off wifi during the evening kept answering True. The panel
+        switches on this to decide whether to show the music UI as healthy, so
+        it went on offering buttons whose commands could only fail.
+
+        RECONNECTING counts as not connected. It is the honest answer for the
+        question actually being asked, and it resolves itself within seconds.
+        """
+        if self._heos is None:
+            return False
+        return self._heos.connection_state == ConnectionState.CONNECTED
 
     # -- events ------------------------------------------------------------
 
