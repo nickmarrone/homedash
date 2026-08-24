@@ -12,6 +12,9 @@ frontend/build/
 frontend/.svelte-kit/
 frontend/dist/
 
+# Panel harness screenshots: build artefacts of a manual check, not source.
+tools/panel/shots/
+
 # Data
 *.db
 *.db-journal
