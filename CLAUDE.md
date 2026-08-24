@@ -777,6 +777,51 @@ changed.
 529 backend tests became 583. Both gates stay green, and the panel was checked in
 real Chrome at both orientations at every step.
 
+### The speaker's own queue, which we had been filling and never emptying (2026-08-24)
+
+The third thing found by living with it, and the worst: after an album
+finished, the speaker would not play again — not from the panel, not from
+the HEOS app, not from anything.
+
+- **`play_url` appends to the speaker's queue.** HEOS's `browse/play_stream`
+  is not a fire-and-forget "play this URL"; it adds a queue entry and plays
+  that entry. Driving an album one track at a time therefore left one dead
+  HomeDash stream URL in the speaker per track, and nothing ever took them
+  out. Whatever anybody played next landed on top of that stack.
+- **The plan and `ARCHITECTURE.md` both asserted the opposite** — "content
+  sent as a URL never enters the speaker's own queue" — and the evidence for
+  it was real: `play_next` genuinely does nothing. The reason is just not the
+  one we inferred. The entry `play_url` appends is always the *last* one, so
+  there is never anything after it to skip to. A true statement about the
+  symptom, a false one about the cause, and it read as confirmed for months.
+- **Two mechanisms, deliberately different.** Pruning on `play` keeps the
+  queue at one entry for the length of an album; clearing at the end empties
+  it. They are not interchangeable: `player/clear_queue` raises Player State
+  Changed as well as Player Queue Changed, so clearing mid-album can stop the
+  music, and pruning at the end has nothing worth keeping.
+- **Pruning happens on `play`, not after `play_url`.** Until the speaker says
+  it is playing there is no way to know which entry it adopted, and pruning to
+  the wrong one deletes the track that is about to start.
+- **It self-heals.** A speaker already holding a stack of dead URLs is cleaned
+  out by the next thing HomeDash plays on it, so nobody has to go and find the
+  probe to get their kitchen back. `homedash-heos-probe --clear-queue` is
+  there for a speaker with nothing left to play.
+- **The three ends of an album became one.** `_end` is now the only place a
+  queue stops — last track finished, skipped off the end, stop pressed — and
+  they differ only in whether the speaker still needs telling. They used to
+  differ in far more, which is how the cleanup came to be missing from two of
+  them; the stop button's ordering moved out of the route to get there.
+- **Tidying is best-effort, and that is a decision.** HEOS errors on
+  `clear_queue` when the queue is empty and old firmware need not implement
+  `get_queue` at all — neither is a reason to fail a stop somebody asked for.
+  `awaiting_start` is cleared before the prune so a failure to tidy can never
+  cost the queue its ability to tell a finished track from the gap before one.
+
+583 backend tests became 604. The fake HEOS system now appends on `play_url`
+and errors on clearing an empty queue, because a fake that is convenient about
+either of those is a fake that would let this back in. Not yet run against the
+real speakers — that is the one step this cannot verify from here.
+
 ---
 
 ---
@@ -819,7 +864,8 @@ App-level, distinct from the device lockdown in Phase 3. PIN gate on editing, se
 ### Jellyfin → HEOS music
 
 *(Landed — see "HEOS playback control" and "The Jellyfin library" under "Landed
-after v1". Left for a third pass: multiroom groups, and resume.)*
+after v1", and the three entries that follow them for what living with it
+found. Left for a third pass: multiroom groups, and resume.)*
 
 ### Chores and rewards
 

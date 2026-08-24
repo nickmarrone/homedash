@@ -180,7 +180,7 @@ files, so per-row unlinking would blank the surviving copy.
 | `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
 | `jellyfin.py` | `JellyfinLibrary`: browse three levels, and fetch the art and audio |
 | `tokens.py` | Short opaque stream tokens, and the 255-character check |
-| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the stop that ends it |
+| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the three ends that give the speaker back |
 | `service.py` | The process-wide singletons, and the switches that decide they exist |
 
 `queue.py` is the only module that knows about both halves — `heos.py` and
@@ -244,7 +244,7 @@ message per second per speaker onto a panel that only needs to know the track
 changed — so the position rides along on the next real update instead, and the
 now-playing bar is deliberately not animated between them.
 
-Three hardware limits shape everything above, none of them guessable:
+Four hardware behaviours shape everything above, none of them guessable:
 
 - **A URL over 255 characters is not played,** and no error is reported. This
   is what forces HomeDash to be the stream origin rather than handing the
@@ -256,6 +256,11 @@ Three hardware limits shape everything above, none of them guessable:
 - **SSDP does not cross a Docker bridge network.** The host is configured, not
   discovered; any one speaker's address will do, since `player/get_players`
   returns the rest.
+- **`browse/play_stream` appends the URL to the speaker's own queue.** It is
+  not a fire-and-forget "play this" — it adds a queue entry and plays that
+  entry. Driving an album one track at a time therefore fills the speaker with
+  one dead HomeDash URL per track unless something takes them out again. See
+  "Giving the speaker back".
 
 **HomeDash is the stream origin, and all three limits force it.** The speaker
 fetches `/api/music/s/{token}` from HomeDash, which proxies the bytes from
@@ -293,11 +298,47 @@ the next track is still on its way would stop the music and let that command
 start it again. The locks are per speaker so one stalled command cannot hold up
 the album playing in the next room.
 
-**Skips go through the queue, not through HEOS.** Content sent as a URL never
-enters the speaker's own queue, so `play_next` has nothing to move to and does
-nothing at all. The route asks `QueueManager` first and falls through to the
-speaker only when there is no HomeDash queue — which is right for a speaker
-playing from one of its own sources.
+**Skips go through the queue, not through HEOS.** `play_next` has nothing to
+move to and does nothing at all, because the entry `play_url` just appended is
+always the *last* one in the speaker's queue. This was originally read as
+"content sent as a URL never enters the speaker's queue", which is the opposite
+of the truth and cost this feature a bug — see below. The conclusion was right
+either way: the route asks `QueueManager` first and falls through to the speaker
+only when there is no HomeDash queue, which is right for a speaker playing from
+one of its own sources.
+
+**Giving the speaker back.** Because `play_url` appends, HomeDash has to tidy
+the speaker's queue or an album leaves it unusable — the speaker resumes into a
+list of URLs that have already been served and whose tokens will stop resolving,
+and nothing anybody plays afterwards, from the panel or from the HEOS app, gets
+out from under them. Two mechanisms, and they are different on purpose:
+
+- **Pruning, on `play`.** Once the speaker reports it is playing, it can say
+  which queue entry it is on, and every other entry goes. That is the earliest
+  such moment — pruning straight after `play_url` would be pruning to the entry
+  the speaker has not adopted yet, and would delete the track about to start.
+  It keeps the queue at one entry for the length of an album, and it sweeps up
+  whatever an older build left behind, so a confused speaker fixes itself on the
+  next thing HomeDash plays on it.
+- **Clearing, at the end.** `QueueManager._end` is the one place an album stops,
+  reached three ways: the last track finishing, a skip off the end, and the
+  panel's stop button. They differ only in whether the speaker still needs
+  telling — it has already stopped itself in the first case — and clearing is
+  never *pruning* here because there is no entry left worth keeping. Clearing
+  rather than pruning mid-album would be wrong the other way: `player/clear_queue`
+  raises Player State Changed as well as Player Queue Changed, so it can stop
+  the music.
+
+Both are best-effort at the `music/service.py` seam. HEOS answers an error for
+`clear_queue` on an empty queue and older firmware need not implement
+`get_queue` at all, neither of which is a reason to fail a stop somebody asked
+for. `awaiting_start` is cleared *before* the prune for the same reason: a
+failure to tidy must never cost the queue its ability to tell a finished track
+from the gap before one, which would stall the album for good.
+
+`homedash-heos-probe` prints each speaker's queue depth, and `--clear-queue`
+empties it — the queue is invisible from the panel and from the logs, so this is
+the only way to see the fault or to clean up after a build that had it.
 
 **HomeDash answers for the speaker about what is playing.** A speaker handed a
 bare URL has no metadata for it and falls back to describing the stream, so the
