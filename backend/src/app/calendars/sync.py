@@ -2,6 +2,7 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import recurring_ical_events
 from icalendar import Calendar
@@ -197,10 +198,13 @@ def _occurrence_bounds(occurrence: VEvent) -> tuple[datetime, datetime, bool]:
     end = occurrence["DTEND"].dt if occurrence.get("DTEND") else start
 
     if isinstance(start, datetime):
+        # No Z and no TZID is RFC 5545's floating time: the same wall clock
+        # wherever you are, which for a panel on a wall means home.
+        home = ZoneInfo(settings.home_timezone)
         if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
+            start = start.replace(tzinfo=home)
         if isinstance(end, datetime) and end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
+            end = end.replace(tzinfo=home)
         return start.astimezone(timezone.utc), end.astimezone(timezone.utc), False
 
     # date-only value: an all-day event

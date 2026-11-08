@@ -14,6 +14,7 @@ deleted appointment either dies or lives forever.
 """
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from icalendar import Calendar
@@ -531,6 +532,34 @@ class TestOneSourceFailing:
         sync_module.sync_sources(session, two_sources[:1])
 
         assert "https://x/broken" in caplog.text
+
+
+class TestFloatingTimes:
+    """DTSTART with neither Z nor TZID. RFC 5545 calls this floating: the same
+    wall-clock time wherever you are, which for a wall panel means home."""
+
+    def test_it_is_read_as_home_time(self, session, source, monkeypatch):
+        home = ZoneInfo("America/New_York")
+        monkeypatch.setattr(
+            sync_module,
+            "settings",
+            Settings(_env_file=None, home_timezone="America/New_York"),
+        )
+        day = (datetime.now(home) + timedelta(days=2)).date()
+        stamp = day.strftime("%Y%m%d")
+        items = _parse(
+            f"BEGIN:VEVENT\r\nUID:floating\r\nSUMMARY:Dentist\r\n"
+            f"DTSTART:{stamp}T090000\r\nDTEND:{stamp}T100000\r\nEND:VEVENT\r\n"
+        )
+        monkeypatch.setattr(
+            sync_module, "build_adapter", lambda _: FakeAdapter(items, changed=True)
+        )
+
+        sync_module.sync_source(session, source)
+
+        [instance] = session.exec(select(EventInstance)).all()
+        expected = datetime(day.year, day.month, day.day, 9, tzinfo=home).astimezone(timezone.utc)
+        assert instance.starts_at.replace(tzinfo=timezone.utc) == expected
 
 
 class TestAnUnchangedSource:
