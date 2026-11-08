@@ -152,7 +152,7 @@ there).
 | Module | Responsibility |
 |---|---|
 | `base.py` | `PhotoSource` protocol and `SourcePhoto` — the Immich seam |
-| `folder.py` | `FolderPhotoSource`: a recursive walk of `HOMEDASH_PHOTOS_DIR` |
+| `folder.py` | `FolderPhotoSource`: a recursive walk of `HOMEDASH_PHOTOS_DIR`. A missing or wholly empty root raises `PhotoSourceUnavailable`, since an unmounted share looks like an empty directory; `reindex` then leaves the table and cache alone |
 | `derivatives.py` | The only module that touches Pillow. Sizes, slots, and rendering |
 | `index.py` | `reindex(session)` — reconcile the table and the derivative cache |
 | `observer.py` | Debounced filesystem watch, so a dropped-in photo appears in seconds |

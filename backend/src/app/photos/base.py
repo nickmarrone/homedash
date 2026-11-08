@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import Protocol
 
 
+class PhotoSourceUnavailable(Exception):
+    """The source cannot say what it holds, so nothing can be concluded from it."""
+
+
 @dataclass(frozen=True)
 class SourcePhoto:
     """One image a source is offering, before it has been indexed."""
@@ -36,7 +40,7 @@ class PhotoSource(Protocol):
 
         Returns the complete set rather than a delta: the index reconciles
         against it, and anything missing from it is deleted. A source that
-        cannot enumerate should raise rather than return a short list, or a
-        transient failure would empty the screensaver.
+        cannot enumerate should raise `PhotoSourceUnavailable` rather than
+        return a short list, or a transient failure would empty the screensaver.
         """
         ...

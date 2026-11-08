@@ -8,7 +8,7 @@ mount is read-only: a bug here must never be able to delete a family photo.
 import logging
 from pathlib import Path
 
-from app.photos.base import SourcePhoto
+from app.photos.base import PhotoSourceUnavailable, SourcePhoto
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,15 @@ class FolderPhotoSource:
 
     def list_photos(self) -> list[SourcePhoto]:
         if not self.root.is_dir():
-            # Not an error: an unconfigured or not-yet-mounted folder just means
-            # no screensaver. Logged at info so it is visible when someone is
-            # wondering why the panel never drifts.
-            logger.info("Photo folder %s does not exist; no photos to index", self.root)
-            return []
+            raise PhotoSourceUnavailable(f"{self.root} does not exist")
+        # A share that is not mounted is an empty directory inside the
+        # container, and looks exactly like one somebody emptied. Telling the
+        # index it is empty would cost every row and every derivative over a
+        # NAS reboot, so an empty root is treated as unknown instead. The price
+        # is that removing the very last photo waits until something else is in
+        # the folder.
+        if next(self.root.iterdir(), None) is None:
+            raise PhotoSourceUnavailable(f"{self.root} is empty")
 
         photos: list[SourcePhoto] = []
         for path in sorted(self.root.rglob("*")):

@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.models import Photo
-from app.photos.base import PhotoSource, SourcePhoto
+from app.photos.base import PhotoSource, PhotoSourceUnavailable, SourcePhoto
 from app.photos.derivatives import (
     PANEL_ORIENTATIONS,
     derivative_name,
@@ -67,7 +67,16 @@ def reindex(session: Session, source: PhotoSource | None = None) -> bool:
         source = FolderPhotoSource(settings.photos_dir)
     cache_dir = settings.photo_cache_dir
 
-    offered = source.list_photos()
+    try:
+        offered = source.list_photos()
+    except PhotoSourceUnavailable as exc:
+        # Everything already rendered stays on the wall until the source can
+        # answer again. With nothing indexed this is just a panel that has no
+        # photos yet, which is not worth a warning every scan.
+        level = logging.WARNING if session.exec(select(Photo)).first() else logging.INFO
+        logger.log(level, "Photo source unavailable, keeping the index as it is: %s", exc)
+        return False
+
     existing = {photo.path: photo for photo in session.exec(select(Photo)).all()}
 
     changed = False
