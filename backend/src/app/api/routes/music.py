@@ -8,19 +8,19 @@ rather than discovering - see the "kid lock" note in CLAUDE.md.
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
-from pyheos import HeosError
 
-from app.api.serializers import serialize_now_playing
-from app.music.heos import TRANSPORT_ACTIONS, HeosController, MusicUnavailable
+from app.music.heos import TRANSPORT_ACTIONS
 from app.music.jellyfin import JellyfinError, JellyfinLibrary
-from app.music.service import (
-    get_controller,
-    get_library,
-    get_queues,
-    get_tokens,
-    library_configured,
-    music_configured,
+from app.music.playback import (
+    LibraryFailed,
+    NothingToPlay,
+    Playback,
+    PlaybackError,
+    SpeakerRefused,
+    Unavailable,
+    UnknownPlayer,
 )
+from app.music.service import get_playback, get_tokens
 from app.music.tokens import UrlTooLong
 
 router = APIRouter()
@@ -57,56 +57,49 @@ class PlayRequest(BaseModel):
 
 
 # -- availability ----------------------------------------------------------
+#
+# Which source answers for a speaker is decided in `app.music.playback`. What
+# is left here is turning its answers into statuses.
 
 
-def _controller_or_503() -> HeosController:
-    """The music controller, or a clear reason there isn't one.
+def _playback_or_503() -> Playback:
+    """The music module, or the reason there isn't one.
 
-    Three different states answer 503, and the panel shows none of them - it
-    just hides the music UI - so the detail string is written for whoever is
-    reading the logs or curling the endpoint.
+    The panel shows none of the 503s - it just hides the music UI - so the
+    detail string is written for whoever is reading the logs or curling.
     """
-    if not music_configured():
+    playback = get_playback()
+    if playback is None:
         raise HTTPException(
             status_code=503,
             detail="music is not configured; set HOMEDASH_MUSIC_ENABLED and HOMEDASH_HEOS_HOST",
         )
-    controller = get_controller()
-    if controller is None or not controller.connected:
-        raise HTTPException(
-            status_code=503, detail="not connected to HEOS yet; still retrying"
-        )
-    return controller
+    return playback
 
 
 def _library_or_503() -> JellyfinLibrary:
-    if not library_configured():
+    playback = get_playback()
+    if playback is None or playback.library is None:
         raise HTTPException(
             status_code=503,
             detail="no music library; set HOMEDASH_JELLYFIN_URL and HOMEDASH_JELLYFIN_API_KEY",
         )
-    library = get_library()
-    if library is None:
-        raise HTTPException(status_code=503, detail="music library not started")
-    return library
+    return playback.library
 
 
-def _speaker_command_failed(exc: Exception, player_id: int) -> HTTPException:
-    """Turn a failed speaker command into the status that describes it.
+# None of these are the caller's fault, so none is a 4xx except the ones that
+# genuinely are: a speaker that is not there, and an album with nothing in it.
+_STATUS: dict[type[PlaybackError], int] = {
+    Unavailable: 503,
+    UnknownPlayer: 404,
+    NothingToPlay: 404,
+    SpeakerRefused: 502,
+    LibraryFailed: 502,
+}
 
-    Only KeyError was handled before, so everything else - a speaker that has
-    dropped off wifi, a system mid-reconnect, a command the firmware refused -
-    escaped as a 500 with a stack trace. The panel hides that well: the button
-    simply does nothing.
 
-    None of these are the caller's fault, so none of them is a 4xx except the
-    one that genuinely is: asking for a speaker that is not there.
-    """
-    if isinstance(exc, KeyError):
-        return HTTPException(status_code=404, detail=f"no player with id {player_id}")
-    if isinstance(exc, MusicUnavailable):
-        return HTTPException(status_code=503, detail=str(exc) or "not connected to HEOS")
-    return HTTPException(status_code=502, detail=f"the speaker refused the command: {exc}")
+def _http(exc: PlaybackError) -> HTTPException:
+    return HTTPException(status_code=_STATUS.get(type(exc), 500), detail=str(exc))
 
 
 # -- reads -----------------------------------------------------------------
@@ -120,30 +113,7 @@ def get_music_players() -> dict:
     the panel can tell "no speakers yet" from "this panel has no music at all"
     without treating an error as the answer. `connected` is what it switches on.
     """
-    if not music_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="music is not configured; set HOMEDASH_MUSIC_ENABLED and HOMEDASH_HEOS_HOST",
-        )
-    controller = get_controller()
-    connected = controller is not None and controller.connected
-    queues = get_queues()
-    players = controller.players() if controller is not None else []
-    for player in players:
-        # What HomeDash is holding for this speaker, which the speaker itself
-        # cannot report: as far as it knows it was handed one stream.
-        player["queue"] = queues.snapshot(player["id"]) if queues is not None else None
-        if queues is not None:
-            track = queues.current(player["id"])
-            if track is not None:
-                player["now_playing"] = serialize_now_playing(
-                    track, player.get("now_playing")
-                )
-    return {
-        "connected": connected,
-        "library": library_configured(),
-        "players": players,
-    }
+    return _playback_or_503().players()
 
 
 @router.get("/api/music/library")
@@ -238,7 +208,8 @@ async def get_music_stream(token: str, request: Request) -> StreamingResponse:
     about its shape follows from that.
     """
     tokens = get_tokens()
-    library = get_library()
+    playback = get_playback()
+    library = playback.library if playback is not None else None
     if tokens is None or library is None:
         raise HTTPException(status_code=503, detail="music library not started")
 
@@ -282,53 +253,28 @@ async def get_music_stream(token: str, request: Request) -> StreamingResponse:
 async def post_music_transport(player_id: int, body: TransportRequest) -> dict:
     """Play, pause, stop, next or previous on one speaker.
 
-    Skips are handled by HomeDash's own queue when there is one. Content sent
-    to a speaker as a URL never enters the speaker's queue, so HEOS's
-    `play_next` has nothing to move to and does nothing at all - a skip button
-    that silently did nothing is exactly the kind of fault a wall panel hides
-    well. A speaker playing from its own sources still falls through to it.
+    Whether HomeDash's queue or the speaker itself carries it out is
+    `Playback.transport`'s call - see there.
     """
     if body.action not in TRANSPORT_ACTIONS:
         raise HTTPException(
             status_code=400,
             detail=f"action must be one of {', '.join(TRANSPORT_ACTIONS)}",
         )
-    controller = _controller_or_503()
-    queues = get_queues()
-
     try:
-        if queues is not None and body.action in ("next", "previous"):
-            handled = await (
-                queues.next(player_id)
-                if body.action == "next"
-                else queues.previous(player_id)
-            )
-            if handled:
-                return {"ok": True}
-        if queues is not None and body.action == "stop":
-            # Handled entirely by the queue when there is one, the same way a
-            # skip is, because stopping is more than a command now: the
-            # speaker's own queue holds whatever `play_url` appended to it and
-            # has to be emptied, or the next thing anyone plays - from the HEOS
-            # app or from here - starts on top of dead HomeDash URLs. The
-            # ordering that used to live in this route lives there too, since
-            # only the queue can hold its lock across all of it.
-            if await queues.stop_and_release(player_id):
-                return {"ok": True}
-        await controller.transport(player_id, body.action)
-    except (KeyError, MusicUnavailable, HeosError) as exc:
-        raise _speaker_command_failed(exc, player_id) from None
+        await _playback_or_503().transport(player_id, body.action)
+    except PlaybackError as exc:
+        raise _http(exc) from None
     return {"ok": True}
 
 
 @router.post("/api/music/players/{player_id}/volume")
 async def post_music_volume(player_id: int, body: VolumeRequest) -> dict:
     """Set one speaker's volume, 0-100."""
-    controller = _controller_or_503()
     try:
-        await controller.set_volume(player_id, body.level)
-    except (KeyError, MusicUnavailable, HeosError) as exc:
-        raise _speaker_command_failed(exc, player_id) from None
+        await _playback_or_503().set_volume(player_id, body.level)
+    except PlaybackError as exc:
+        raise _http(exc) from None
     return {"ok": True}
 
 
@@ -340,38 +286,22 @@ async def post_music_play(player_id: int, body: PlayRequest) -> dict:
     time - see app/music/queue.py for why there is no way to hand over the
     whole album at once.
     """
-    if body.album_id is None and body.track_ids is None:
+    if body.album_id is not None:
+        album_id, track_ids = body.album_id, None
+    elif body.track_ids is not None:
+        if body.parent_album_id is None:
+            raise HTTPException(status_code=400, detail="track_ids requires parent_album_id")
+        album_id, track_ids = body.parent_album_id, body.track_ids
+    else:
         raise HTTPException(status_code=400, detail="pass either album_id or track_ids")
 
-    controller = _controller_or_503()
-    library = _library_or_503()
-    queues = get_queues()
-    if queues is None:
-        raise HTTPException(status_code=503, detail="music library not started")
-    if player_id not in {p["id"] for p in controller.players()}:
-        raise HTTPException(status_code=404, detail=f"no player with id {player_id}")
-
     try:
-        if body.album_id is not None:
-            tracks = library.tracks(body.album_id)
-        else:
-            if body.parent_album_id is None:
-                raise HTTPException(
-                    status_code=400, detail="track_ids requires parent_album_id"
-                )
-            by_id = {t.id: t for t in library.tracks(body.parent_album_id)}
-            tracks = [by_id[t] for t in (body.track_ids or []) if t in by_id]
-    except JellyfinError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from None
-
-    if not tracks:
-        raise HTTPException(status_code=404, detail="nothing to play")
-
-    try:
-        await queues.start(player_id, tracks)
+        queued = await _playback_or_503().play(player_id, album_id, track_ids)
+    except PlaybackError as exc:
+        raise _http(exc) from None
     except UrlTooLong as exc:
         # 500, and loudly: this is configuration, not a bad request, and it is
         # the failure that otherwise presents as a speaker playing silence.
         raise HTTPException(status_code=500, detail=str(exc)) from None
 
-    return {"ok": True, "queued": len(tracks)}
+    return {"ok": True, "queued": queued}

@@ -15,6 +15,7 @@ import logging
 from app.config import get_settings
 from app.music.heos import HeosController
 from app.music.jellyfin import JellyfinLibrary
+from app.music.playback import Playback
 from app.music.queue import QueueManager
 from app.music.tokens import TokenStore, stream_url
 from app.sse import broadcaster
@@ -26,6 +27,7 @@ _controller: HeosController | None = None
 _library: JellyfinLibrary | None = None
 _tokens: TokenStore | None = None
 _queues: QueueManager | None = None
+_playback: Playback | None = None
 
 
 def music_configured() -> bool:
@@ -49,7 +51,7 @@ def library_configured() -> bool:
 
 
 def start_music() -> None:
-    global _controller, _library, _tokens, _queues
+    global _controller, _library, _tokens, _queues, _playback
     if not music_configured():
         if settings.music_enabled and not settings.heos_host:
             logger.warning(
@@ -98,6 +100,7 @@ def start_music() -> None:
     _controller = HeosController(
         settings.heos_host, on_change=_publish_change, on_state=_on_player_state
     )
+    _playback = Playback(_controller, _library, _queues)
     # Logged before the connection is attempted, not after it succeeds: the
     # connect runs in a background task that may take a retry cycle or never
     # succeed at all, and "did this feature start" has to be answerable
@@ -111,29 +114,28 @@ def start_music() -> None:
 
 
 async def stop_music() -> None:
-    global _controller, _library, _tokens, _queues
+    global _controller, _library, _tokens, _queues, _playback
     if _controller is not None:
         await _controller.stop()
+    _playback = None
     _controller = None
     _library = None
     _tokens = None
     _queues = None
 
 
-def get_controller() -> HeosController | None:
-    return _controller
+def get_playback() -> Playback | None:
+    """The one thing the music routes talk to, or None when there are no speakers.
 
-
-def get_library() -> JellyfinLibrary | None:
-    return _library
+    The controller, library and queue are deliberately not handed out on their
+    own: which of them answers for a speaker is `Playback`'s decision, and a
+    route holding one of them directly is a route making it.
+    """
+    return _playback
 
 
 def get_tokens() -> TokenStore | None:
     return _tokens
-
-
-def get_queues() -> QueueManager | None:
-    return _queues
 
 
 def _url_for(track) -> str:
