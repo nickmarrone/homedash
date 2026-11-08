@@ -72,3 +72,27 @@ export function startIdleTimer(options: IdleTimerOptions): IdleTimer {
 		}
 	};
 }
+
+/** Drop the click that follows the tap in progress.
+ *
+ * Whatever is removed on `pointerdown` is gone by the time a touchscreen
+ * synthesizes the click, which then lands on what was underneath. Captured at
+ * the window so it runs ahead of every handler in the page. Ends at the next
+ * `pointerdown`, so a tap that produced no click cannot eat a later, deliberate
+ * one; the timeout is only there so the listeners do not linger.
+ */
+export function swallowNextClick(timeoutMs = 1_000): void {
+	const swallow = (event: Event) => {
+		event.stopPropagation();
+		event.preventDefault();
+		finish();
+	};
+	const finish = () => {
+		window.removeEventListener('click', swallow, true);
+		window.removeEventListener('pointerdown', finish, true);
+		clearTimeout(timer);
+	};
+	window.addEventListener('click', swallow, true);
+	window.addEventListener('pointerdown', finish, true);
+	const timer = setTimeout(finish, timeoutMs);
+}

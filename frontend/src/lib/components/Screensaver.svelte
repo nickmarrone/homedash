@@ -111,9 +111,9 @@
 	}
 </script>
 
-<!-- Fixed and on top, so the tap that dismisses it is swallowed here and
-     cannot also press whatever calendar control sits underneath - the standard
-     double-action bug in tap-to-dismiss overlays. -->
+<!-- Fixed and on top. Being on top is not enough to stop the tap that dismisses
+     it pressing the control underneath: the overlay goes on pointerdown, before
+     the click exists. +page.svelte swallows that click - see swallowNextClick. -->
 <div
 	class="screensaver"
 	role="button"

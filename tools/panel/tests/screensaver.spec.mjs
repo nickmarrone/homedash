@@ -76,6 +76,17 @@ test.describe('the tap that dismisses it', () => {
     await page.waitForTimeout(400);
   }
 
+  test('does not also press the control underneath, with a finger', async ({ page, panel }) => {
+    await dismissOverControl(page, panel, (x, y) => page.touchscreen.tap(x, y));
+    await expect(panel.tab('Month')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('the next tap after dismissing it works normally', async ({ page, panel }) => {
+    await dismissOverControl(page, panel, (x, y) => page.touchscreen.tap(x, y));
+    await panel.tab('Week').tap();
+    await expect(panel.tab('Week')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   test('does not also press the control underneath, with a mouse', async ({ page, panel }) => {
     await dismissOverControl(page, panel, (x, y) => page.mouse.click(x, y));
     await expect(panel.tab('Month')).toHaveAttribute('aria-pressed', 'true');
