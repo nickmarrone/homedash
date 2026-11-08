@@ -69,17 +69,21 @@ export function createSlideshow(
 	random: () => number = Math.random
 ): Slideshow {
 	let queue: Slide[] = [];
-	let lastKey: string | null = null;
+	let last: Slide | null = null;
+
+	const overlapsLast = (slide: Slide) =>
+		slide.photos.some((photo) => last?.photos.some((shown) => shown.id === photo.id));
 
 	const refill = () => {
 		queue = buildSlides(photos, random);
 		// The seam is the only place a plain reshuffle actually repeats: within
-		// one pass every slide is distinct, but the last slide of one pass can
-		// easily be the first of the next. Swapping it back one position is
-		// enough, and keeps the rest of the order untouched.
-		if (queue.length > 1 && queue[0].key === lastKey) {
-			[queue[0], queue[1]] = [queue[1], queue[0]];
-		}
+		// one pass every photo appears once, but the last slide of one pass can
+		// easily share photos with the first of the next. Compared by photo
+		// rather than by key, because pairs are re-dealt each pass: 2+3 and 3+2
+		// are different keys and the same picture. Sometimes every slide
+		// overlaps, and then a repeat is the only option.
+		const clear = queue.findIndex((slide) => !overlapsLast(slide));
+		if (clear > 0) [queue[0], queue[clear]] = [queue[clear], queue[0]];
 	};
 
 	return {
@@ -87,7 +91,7 @@ export function createSlideshow(
 			if (queue.length === 0) refill();
 			const slide = queue.shift();
 			if (!slide) return null;
-			lastKey = slide.key;
+			last = slide;
 			return slide;
 		}
 	};
