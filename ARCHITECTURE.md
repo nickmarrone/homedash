@@ -1024,8 +1024,10 @@ cd frontend && npm run check      # svelte-check, the only frontend gate
 docker compose up --build         # the real thing
 ```
 
-There is no CI and no Makefile. Ruff is configured (`cd backend && uv run ruff check .`) and
-is expected to be clean; it is not a formatter and nothing reformats this code.
+`.github/workflows/ci.yml` runs pytest, ruff and svelte-check on every pull request and on
+pushes to `main`. It does not run the panel harness, so a client-render failure can still pass
+CI. There is no Makefile. Ruff is configured (`cd backend && uv run ruff check .`) and is
+expected to be clean; it is not a formatter and nothing reformats this code.
 
 **What it checks is deliberately narrow.** `E`, `F`, `I`, `B` — unused imports and locals,
 undefined names, import order, and bugbear's real-defect rules. Pyupgrade (`UP`) is left out
