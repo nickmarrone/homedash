@@ -277,6 +277,44 @@ class HeosController:
             await player.remove_from_queue(stale)
 
 
+class HeosSpeaker:
+    """`queue.Speaker` for a HEOS system: the queue's way to the speakers.
+
+    A thin adapter over the controller, with one decision of its own. Tidying
+    the speaker's queue is best-effort, and that is a decision rather than
+    laziness: HEOS answers an error for `clear_queue` on an empty queue, and
+    older firmware need not implement `get_queue` at all - neither of which is
+    a reason to fail a stop the user asked for, or to abort the track change
+    that was the actual job. Logged at debug because on the two speakers here
+    it is expected to be quiet, and a warning per album would train people to
+    ignore the log.
+
+    The controller's own `clear_queue` and `prune_queue` still raise, because
+    `homedash-heos-probe --clear-queue` is asked to report exactly that.
+    """
+
+    def __init__(self, controller: HeosController) -> None:
+        self._controller = controller
+
+    async def play_url(self, player_id: int, url: str) -> None:
+        await self._controller.play_url(player_id, url)
+
+    async def stop(self, player_id: int) -> None:
+        await self._controller.transport(player_id, "stop")
+
+    async def clear_queue(self, player_id: int) -> None:
+        try:
+            await self._controller.clear_queue(player_id)
+        except Exception:
+            logger.debug("Could not clear player %d's queue", player_id, exc_info=True)
+
+    async def prune_queue(self, player_id: int) -> None:
+        try:
+            await self._controller.prune_queue(player_id)
+        except Exception:
+            logger.debug("Could not prune player %d's queue", player_id, exc_info=True)
+
+
 def _state_of(player: HeosPlayer) -> str:
     """The speaker's play state as a plain string.
 
