@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -334,6 +335,28 @@ def needs_full_resync(source: CalendarSource, now: datetime) -> bool:
         return True
     interval = timedelta(minutes=settings.full_resync_interval_minutes)
     return now - as_utc(last) >= interval
+
+
+def sync_sources(session: Session, sources: Sequence[CalendarSource]) -> bool:
+    """Sync each source, so that one failing costs only its own update.
+
+    Returns True if any source's instances were rewritten.
+
+    The rollback is not tidiness. `sync_source` deletes a source's rows before
+    rebuilding them and every source here shares this session, so a failure
+    part-way through leaves those deletes pending. Without it, the next
+    source's successful commit would flush them and silently empty the calendar
+    that failed.
+    """
+    changed = False
+    for source in sources:
+        try:
+            if sync_source(session, source):
+                changed = True
+        except Exception:
+            session.rollback()
+            logger.exception("Sync failed for source %s (%s)", source.id, source.url)
+    return changed
 
 
 def sync_source(session: Session, source: CalendarSource) -> bool:

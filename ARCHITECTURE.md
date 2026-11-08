@@ -61,7 +61,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `caldav_source.py` | CalDAV, sync-token change detection |
 | `google_source.py` | Google Calendar `events.list` with `syncToken` |
 | `google_auth.py` | OAuth refresh-token credentials |
-| `sync.py` | `seed_calendars_from_settings`, `build_adapter`, `sync_source`, `sync_window` |
+| `sync.py` | `seed_calendars_from_settings`, `build_adapter`, `sync_source`, `sync_sources` (one failure costs only that source: it rolls back, or the next commit would flush the failed calendar's pending deletes), `sync_window` |
 | `grid.py` | Day/lookahead/week/month bucketing, anchors, period titles |
 | `queries.py` | `instances_touching` — the one overlap predicate both views read through |
 | `localtime.py` | `to_local` / `as_utc`, all-day floating-datetime handling |
