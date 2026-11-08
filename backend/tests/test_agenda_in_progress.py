@@ -179,3 +179,40 @@ class TestTheTwoViewsAgree:
 
         assert "Holiday" in agenda
         assert "Holiday" in grid_titles
+
+
+def midnight(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
+class TestWhatHasAlreadyFinished:
+    """The other edge of 'touches today'. An all-day DTEND is exclusive, so
+    yesterday's event carries an end of exactly today's midnight."""
+
+    def test_yesterdays_all_day_event_has_left_the_agenda(self, client, session, calendar):
+        today = today_home()
+        add(
+            session,
+            calendar,
+            midnight(today - timedelta(days=1)),
+            midnight(today),
+            "Yesterday",
+            all_day=True,
+        )
+        assert titles(client.get("/api/agenda").json()) == []
+
+    def test_last_nights_event_ending_at_midnight_has_left_the_agenda(
+        self, client, session, calendar
+    ):
+        from zoneinfo import ZoneInfo
+
+        today = today_home()
+        local_midnight = datetime(today.year, today.month, today.day, tzinfo=ZoneInfo(HOME))
+        add(
+            session,
+            calendar,
+            (local_midnight - timedelta(hours=2)).astimezone(timezone.utc),
+            local_midnight.astimezone(timezone.utc),
+            "Late show",
+        )
+        assert titles(client.get("/api/agenda").json()) == []

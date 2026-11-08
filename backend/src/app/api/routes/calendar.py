@@ -45,20 +45,22 @@ def get_agenda(session: SessionDep) -> list[dict]:
 
     rows = instances_touching(session, tz, first=today, limit=200)
 
-    return [
-        serialize_instance(
-            instance,
-            source,
-            tz,
-            agenda_date=max(
-                local_dates_spanned(
-                    instance.starts_at, instance.ends_at, instance.all_day, tz
-                )[0],
-                today,
-            ).isoformat(),
+    items = []
+    for instance, source in rows:
+        spanned = local_dates_spanned(
+            instance.starts_at, instance.ends_at, instance.all_day, tz
         )
-        for instance, source in rows
-    ]
+        # The query is a superset at this edge: an all-day DTEND is exclusive, so
+        # yesterday's event ends at exactly today's midnight and still matches.
+        # The grids re-bucket and never see it; this list has to ask.
+        if spanned[-1] < today:
+            continue
+        items.append(
+            serialize_instance(
+                instance, source, tz, agenda_date=max(spanned[0], today).isoformat()
+            )
+        )
+    return items
 
 
 @router.get("/api/calendar")
