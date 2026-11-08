@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from app.music.base import Album, Artist, Track
+from app.music.base import Album, Artist, AudioSourceError, AudioStream, Track
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,12 @@ _TRACK_FIELDS = "RunTimeTicks,IndexNumber,AlbumArtist"
 # Jellyfin measures time in 100-nanosecond ticks.
 _TICKS_PER_MS = 10_000
 
+# All a speaker needs to seek. Content-Encoding is deliberately absent - see
+# `open_stream`, which declines compression so there is never one to forward.
+_FORWARDED_STREAM_HEADERS = ("content-length", "content-range", "accept-ranges")
 
-class JellyfinError(RuntimeError):
+
+class JellyfinError(AudioSourceError):
     """Raised when Jellyfin cannot be reached or refuses a request."""
 
 
@@ -225,27 +229,21 @@ class JellyfinLibrary:
             return None
         return response.content, response.headers.get("Content-Type", "image/jpeg")
 
-    async def open_stream(self, track_id: str, range_header: str | None = None):
+    async def open_stream(self, track_id: str, range_header: str | None = None) -> AudioStream:
         """Open the audio for one track, without reading it.
-
-        Returns `(response, client)`, both still open: the caller iterates the
-        response and must close both when it is done. That is an awkward
-        contract and it is the honest one - a streaming response is pulled long
-        after the handler that created it has returned, so neither object can
-        be scoped to a `with` block here.
 
         `Range` is forwarded rather than answered, because HEOS asks for ranges
         and Jellyfin already implements them properly for the underlying file.
         Nothing else from the speaker's request is passed on.
 
         `Accept-Encoding: identity` is set explicitly, and it is not
-        belt-and-braces. The caller streams `aiter_raw()` - undecoded bytes -
-        and forwards only Content-Length, Content-Range and Accept-Ranges, so a
-        `Content-Encoding` from Jellyfin would be dropped and the speaker would
-        be handed compressed bytes it has no way to know are compressed. httpx
-        sends `gzip, deflate` by default, so declining has to be deliberate.
-        Audio is already compressed and no sane server would gzip it, which is
-        exactly why this would be found the hard way.
+        belt-and-braces. The stream is `aiter_raw()` - undecoded bytes - and
+        only `_FORWARDED_STREAM_HEADERS` go with it, so a `Content-Encoding`
+        from Jellyfin would be dropped and the speaker would be handed
+        compressed bytes it has no way to know are compressed. httpx sends
+        `gzip, deflate` by default, so declining has to be deliberate. Audio is
+        already compressed and no sane server would gzip it, which is exactly
+        why this would be found the hard way.
         """
         headers = dict(self.headers)
         headers["Accept-Encoding"] = "identity"
@@ -260,12 +258,25 @@ class JellyfinLibrary:
             await client.aclose()
             raise JellyfinError(f"could not reach Jellyfin: {exc}") from exc
 
-        if response.status_code >= 400:
-            status = response.status_code
+        async def close() -> None:
             await response.aclose()
             await client.aclose()
-            raise JellyfinError(f"Jellyfin returned {status}")
-        return response, client
+
+        if response.status_code >= 400:
+            await close()
+            raise JellyfinError(f"Jellyfin returned {response.status_code}")
+
+        return AudioStream(
+            status_code=response.status_code,
+            media_type=response.headers.get("Content-Type", "audio/mpeg"),
+            headers={
+                name: response.headers[name]
+                for name in _FORWARDED_STREAM_HEADERS
+                if name in response.headers
+            },
+            chunks=response.aiter_raw(),
+            close=close,
+        )
 
 
 def _ticks_to_ms(ticks: Any) -> int | None:

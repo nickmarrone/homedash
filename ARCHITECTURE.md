@@ -179,7 +179,7 @@ files, so per-row unlinking would blank the surviving copy.
 | `base.py` | `MusicLibrary` protocol and the `Artist`/`Album`/`Track` shapes |
 | `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs. `HeosSpeaker`: the queue's adapter over it, where tidying the speaker's queue is best-effort |
 | `jellyfin.py` | `JellyfinLibrary`: browse three levels, and fetch the art and audio |
-| `tokens.py` | Short opaque stream tokens, and the 255-character check |
+| `tokens.py` | `TokenStore`: short opaque stream tokens and the URLs that carry them, with the 255-character check beside the minting |
 | `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the three ends that give the speaker back. `Speaker`: the port it drives the speakers through — `play_url`, `stop`, `clear_queue`, `prune_queue` |
 | `playback.py` | `Playback`: which source answers for a speaker — the players snapshot with the now-playing override, transport precedence, play, volume — and the failures sorted into its own exceptions |
 | `service.py` | The process-wide singletons, and the switches that decide they exist. Routes get `get_playback()` and `get_tokens()`, nothing else |
@@ -486,9 +486,12 @@ Routes stay thin — date arithmetic lives in `grid.py` and `devices.py`, not in
 `GET /api/music/s/{token}` is the app's only streaming response, and the only
 endpoint whose client is not a browser. It forwards the caller's `Range` header
 and passes `Content-Range`/`Accept-Ranges` back, because HEOS asks for ranges and
-Jellyfin already implements them correctly. The `httpx.AsyncClient` deliberately
-outlives the handler — the body is pulled long after it returns — so it is closed
-in the generator's `finally`, not a context manager. Browsing failures answer
+Jellyfin already implements them correctly. An audio source's `open_stream` returns
+an `AudioStream` (`music/base.py`) carrying its own status, media type, headers, bytes
+and `close`, so what a source forwards and what it has to release stay with that
+source and the route only copies them onto a response. The body is pulled long after
+the handler returns, so `AudioStream.body()` runs `close` in its `finally`, shielded
+because a speaker hanging up arrives as a cancellation. Browsing failures answer
 **502, not 500**: the fault is upstream, and the status is the difference between
 "check Jellyfin" and "check HomeDash" for whoever reads the log.
 

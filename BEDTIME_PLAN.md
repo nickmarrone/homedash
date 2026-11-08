@@ -339,7 +339,8 @@ file Y, from second Z". Three small changes:
    None`). The 255-character check is untouched. Update `test_music_tokens.py`.
 3. **`GET /api/music/s/{token}`** dispatches on `ref.source`: `jellyfin` → the existing
    `library.open_stream`; `audiobookshelf` → `listen.service.open_stream(ref, range)`
-   (Part 4). The streaming body generator is shared.
+   (Part 4). Both return an `AudioStream` (`music/base.py`), and `AudioStream.body()` is the
+   shared streaming generator: ffmpeg's process cleanup goes in that stream's `close`.
 
 Two hooks the sessions need, both optional callables so nothing existing changes:
 
@@ -806,7 +807,7 @@ Existing code to reuse rather than rewrite: `ScreenWindow.lit_at` wrap logic
 (`config.py:99`), `_normalize_hh_mm` (`config.py:71`), `_parse_json` (`config.py:315`),
 `schedule_of`'s tolerant read (`devices.py:58`) as the model for every KV read,
 `JellyfinLibrary.open_stream` as the template for the plain ABS proxy
-(`music/jellyfin.py:228`), the streaming body generator in `routes/music.py:254`,
+(`music/jellyfin.py:228`), the streaming body generator in `AudioStream.body()` (`music/base.py`),
 `QueueManager` locking and `awaiting_start` (`music/queue.py`), `pickPlayer` fallback
 pattern (`musicPreference.ts:35`) for the remembered listener, `createMusic`'s `run()`
 (`music.svelte.ts:71`), the A–Z rail (`MusicBrowser.svelte:97-132`), and
