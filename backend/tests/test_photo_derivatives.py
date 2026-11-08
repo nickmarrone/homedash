@@ -165,3 +165,48 @@ class TestDerivativeNames:
         """The name is content-addressed for this reason: the URL a panel
         caches for a year must stop being valid the moment the bytes change."""
         assert derivative_name("aaa", (1920, 1080)) != derivative_name("bbb", (1920, 1080))
+
+
+class TestTransparency:
+    """A transparent corner converted straight to RGB comes out black, which on
+    a wall reads as a rendering fault."""
+
+    def _corner(self, tmp_path, source):
+        output = tmp_path / "out.jpg"
+        render(source, output, (20, 20))
+        with Image.open(output) as image:
+            return image.convert("RGB").getpixel((10, 10))
+
+    def _assert_close(self, actual, expected):
+        difference = [abs(a - e) for a, e in zip(actual, expected, strict=True)]
+        assert max(difference) <= 8, (actual, expected)
+
+    def test_a_clear_rgba_image_lands_on_white(self, tmp_path):
+        source = write_image(tmp_path / "a.png", 20, 20, (0, 0, 0, 0), mode="RGBA")
+        self._assert_close(self._corner(tmp_path, source), (255, 255, 255))
+
+    def test_partial_transparency_blends_with_white(self, tmp_path):
+        source = write_image(tmp_path / "a.png", 20, 20, (255, 0, 0, 128), mode="RGBA")
+        self._assert_close(self._corner(tmp_path, source), (255, 127, 127))
+
+    def test_an_opaque_rgba_image_keeps_its_colour(self, tmp_path):
+        source = write_image(tmp_path / "a.png", 20, 20, (10, 20, 200, 255), mode="RGBA")
+        self._assert_close(self._corner(tmp_path, source), (10, 20, 200))
+
+    def test_a_clear_greyscale_image_lands_on_white(self, tmp_path):
+        source = write_image(tmp_path / "a.png", 20, 20, (0, 0), mode="LA")
+        self._assert_close(self._corner(tmp_path, source), (255, 255, 255))
+
+    def test_a_palette_image_with_a_transparent_entry_lands_on_white(self, tmp_path):
+        source = tmp_path / "a.png"
+        image = Image.new("P", (20, 20), 0)
+        image.putpalette([0, 0, 0, 255, 0, 0])
+        image.save(source, transparency=0)
+        self._assert_close(self._corner(tmp_path, source), (255, 255, 255))
+
+    def test_an_opaque_palette_image_keeps_its_colour(self, tmp_path):
+        source = tmp_path / "a.png"
+        image = Image.new("P", (20, 20), 1)
+        image.putpalette([0, 0, 0, 200, 10, 10])
+        image.save(source)
+        self._assert_close(self._corner(tmp_path, source), (200, 10, 10))

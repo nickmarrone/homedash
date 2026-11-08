@@ -452,6 +452,8 @@ npm run dev
 ```bash
 cd backend && uv run pytest      # backend suite
 cd frontend && npm run check     # svelte-check
+cd frontend && npm test          # unit tests
+cd tools/panel && npm test       # the panel in real Chrome (needs Chrome installed)
 ```
 
 ### Migrations

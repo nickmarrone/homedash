@@ -8,8 +8,9 @@ import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const BUILD = '/home/nmarrone/src/nickmarrone/homedash/frontend/build';
+const BUILD = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend', 'build');
 const OUT = process.argv[2] || '/tmp/music';
 mkdirSync(OUT, { recursive: true });
 

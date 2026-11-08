@@ -134,3 +134,18 @@ class TestTheCacheSurvivesAFailure:
         assert weather_client.refresh_weather() is False
 
         assert weather_client.get_cached_weather()["current"]["temperature_2m"] == 21.5
+
+
+class TestAnErrorStatus:
+    """A 5xx with a perfectly parseable body, which is why the status has to be
+    checked rather than leaving the decode to fail."""
+
+    def test_a_failed_forecast_with_a_json_body_is_a_failure(self, monkeypatch):
+        serve(monkeypatch, FakeResponse(500, FORECAST))
+        assert weather_client.refresh_weather() is False
+        assert weather_client._cache is None
+
+    def test_a_failed_air_quality_call_with_a_json_body_is_a_failure(self, monkeypatch):
+        serve(monkeypatch, FakeResponse(200, FORECAST), FakeResponse(500, AIR_QUALITY))
+        assert weather_client.refresh_weather() is False
+        assert weather_client._cache is None

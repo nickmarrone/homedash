@@ -6,9 +6,14 @@
   "description": "Headless-browser harness that drives the HomeDash panel in real Chrome",
   "scripts": {
     "smoke": "node panel.mjs smoke",
-    "shot": "node panel.mjs shot"
+    "shot": "node panel.mjs shot",
+    "build:panel": "npm --prefix ../../frontend run build",
+    "test": "npm run build:panel && playwright test"
   },
   "dependencies": {
     "playwright": "^1.62.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }

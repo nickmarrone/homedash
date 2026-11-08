@@ -112,3 +112,40 @@ def test_one_character_past_the_boundary_is_not():
 def test_a_trailing_slash_on_the_base_url_does_not_double_up():
     url = TokenStore("http://host:8000/").url_for("t1")
     assert "//api" not in url
+
+
+def test_a_token_is_gone_at_the_instant_it_expires():
+    clock = [1000.0]
+    store = TokenStore(BASE, ttl_seconds=60, now=lambda: clock[0])
+    token = store.mint("t1")
+    clock[0] += 60
+    assert store.resolve(token) is None
+
+
+def test_expired_tokens_are_dropped_on_the_next_mint():
+    clock = [1000.0]
+    store = TokenStore(BASE, ttl_seconds=60, now=lambda: clock[0])
+    store.mint("t1")
+    clock[0] += 60
+    store.mint("t2")
+    assert len(store) == 1
+
+
+def test_a_token_still_inside_its_lifetime_is_not_dropped():
+    clock = [1000.0]
+    store = TokenStore(BASE, ttl_seconds=60, now=lambda: clock[0])
+    store.mint("t1")
+    clock[0] += 59
+    store.mint("t2")
+    assert len(store) == 2
+
+
+def test_the_limit_is_exactly_what_heos_accepts():
+    """The boundary, on both sides, because 255 is the number that matters."""
+    fixed = len("/api/music/s/") + 8  # token_urlsafe(6) is always 8 characters
+    fits = TokenStore("http://" + "h" * (MAX_URL_LENGTH - fixed - len("http://")))
+    assert len(fits.url_for("t1")) == 255
+
+    over = TokenStore("http://" + "h" * (MAX_URL_LENGTH - fixed - len("http://") + 1))
+    with pytest.raises(UrlTooLong):
+        over.url_for("t1")

@@ -19,6 +19,7 @@ backend/          FastAPI + SQLModel + APScheduler, a uv project (package `app`,
 frontend/         SvelteKit 5, adapter-static, compiled to plain files FastAPI serves
 frontend/static/  Served at the site root; holds the vendored woff2 files
 deploy/pi/        Raspberry Pi kiosk provisioning: setup script, screen agent, systemd units
+tools/panel/      Real-Chrome test suite for the panel, plus hand-run screenshot scripts
 migrations/       (under backend/) Alembic revisions, run automatically at startup
 Dockerfile        Two stages: node builds the frontend, python serves it alongside the API
 docker-compose.yml
@@ -1022,14 +1023,15 @@ cd backend  && uv run uvicorn app.main:app --reload --port 8000
 cd frontend && npm run dev        # vite proxies /api and /healthz to :8000
 
 cd backend  && uv run pytest      # the backend suite
-cd frontend && npm run check      # svelte-check, the only frontend gate
+cd frontend && npm run check      # svelte-check
+cd frontend && npm test           # Vitest, for the plain .ts modules
+cd tools/panel && npm test        # builds the panel, then drives it in real Chrome
 
 docker compose up --build         # the real thing
 ```
 
-`.github/workflows/ci.yml` runs pytest, ruff and svelte-check on every pull request and on
-pushes to `main`. It does not run the panel harness, so a client-render failure can still pass
-CI. There is no Makefile. Ruff is configured (`cd backend && uv run ruff check .`) and is
+`.github/workflows/ci.yml` runs all of those, and ruff, on every pull request and on pushes
+to `main`. There is no Makefile. Ruff is configured (`cd backend && uv run ruff check .`) and is
 expected to be clean; it is not a formatter and nothing reformats this code.
 
 **What it checks is deliberately narrow.** `E`, `F`, `I`, `B` — unused imports and locals,
@@ -1098,9 +1100,13 @@ steering it at a temp file means setting `HOMEDASH_DB_PATH` *and* clearing
 - Test names read as sentences, and docstrings explain **why the bug being guarded against
   is plausible**, not what the code does.
 
-### A Playwright panel harness
+### Where a frontend test belongs
 
-`.claude/worktrees/headless-browser-harness/tools/panel/panel.mjs` (an untracked worktree)
-drives real Chrome against the running panel. It is the only thing that catches
-client-render failures — the backend suite stays green while the display is blank. It is
-what caught a rune used in a plain `.ts` file.
+- **Plain `.ts` logic goes in Vitest** (`frontend/src/lib/*.test.ts`), with no DOM. Timing
+  and ordering rules are far easier to pin here with injected clocks and random sources.
+- **Anything that has to render goes in Playwright** (`tools/panel/tests/`), at both
+  1920x1080 and 1080x1920. It is the only thing that catches client-render failures — the
+  backend suite stays green while the display is blank. The API and event stream are stubbed;
+  `real-backend.spec.mjs` runs one path with nothing stubbed and checks that the stub's
+  response shapes still match the real API. See `tools/panel/README.md`.
+- `tools/panel/panel.mjs` and the `*-shot.mjs` scripts are for looking at the panel by hand.

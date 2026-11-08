@@ -17,13 +17,24 @@ from app.api.routes import router
 from app.music.base import AudioSourceError
 from app.music.jellyfin import JellyfinError
 from app.music.playback import Playback
-from app.music.tokens import TokenStore
+from app.music.tokens import TokenStore, UrlTooLong
 from music_fakes import (
     FakeLibrary,
     connected_controller,
     queue_manager,
     unconnected_controller,
 )
+
+_patches: list[pytest.MonkeyPatch] = []
+
+
+@pytest.fixture(autouse=True)
+def _undo_patches():
+    """Clients are built inside the tests, with arguments, so a fixture cannot
+    hand them out; it can still be the one place they are cleaned up."""
+    yield
+    while _patches:
+        _patches.pop().undo()
 
 
 def make_client(controller=None, configured=True, library=None, queues=None):
@@ -40,70 +51,56 @@ def make_client(controller=None, configured=True, library=None, queues=None):
     )
     monkey = pytest.MonkeyPatch()
     monkey.setattr(routes_module, "get_playback", lambda: playback)
+    _patches.append(monkey)
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app), monkey
+    return TestClient(app)
 
 
 def test_a_panel_with_no_music_configured_gets_503_everywhere():
     """Not 404: the routes exist, and the panel distinguishes 'this HomeDash
     has no music' from 'that player is gone' by the status code."""
-    client, monkey = make_client(configured=False)
-    try:
-        assert client.get("/api/music/players").status_code == 503
-        assert (
-            client.post("/api/music/players/1/transport", json={"action": "play"}).status_code
-            == 503
-        )
-    finally:
-        monkey.undo()
+    client = make_client(configured=False)
+    assert client.get("/api/music/players").status_code == 503
+    assert (
+        client.post("/api/music/players/1/transport", json={"action": "play"}).status_code
+        == 503
+    )
 
 
 def test_players_answers_200_while_still_connecting():
     """The speakers are usually off at boot and the connection retries for as
     long as it takes. That is an ordinary state, not an error - the panel needs
     a body it can render, with `connected` false."""
-    client, monkey = make_client(controller=None)
-    try:
-        response = client.get("/api/music/players")
-        assert response.status_code == 200
-        assert response.json() == {"connected": False, "library": False, "players": []}
-    finally:
-        monkey.undo()
+    client = make_client(controller=None)
+    response = client.get("/api/music/players")
+    assert response.status_code == 200
+    assert response.json() == {"connected": False, "library": False, "players": []}
 
 
 def test_a_command_sent_before_the_connection_is_up_is_refused():
     """Reads degrade to 'nothing yet'; writes must not, or a tap on the wall
     would report success while the speaker never heard it."""
-    client, monkey = make_client(controller=None)
-    try:
-        response = client.post("/api/music/players/1/transport", json={"action": "play"})
-        assert response.status_code == 503
-    finally:
-        monkey.undo()
+    client = make_client(controller=None)
+    response = client.post("/api/music/players/1/transport", json={"action": "play"})
+    assert response.status_code == 503
 
 
 def test_players_reports_the_speakers_once_connected():
     controller, _ = connected_controller()
-    client, monkey = make_client(controller=controller)
-    try:
-        body = client.get("/api/music/players").json()
-        assert body["connected"] is True
-        assert [p["name"] for p in body["players"]] == ["Kitchen"]
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller)
+    body = client.get("/api/music/players").json()
+    assert body["connected"] is True
+    assert [p["name"] for p in body["players"]] == ["Kitchen"]
 
 
 @pytest.mark.parametrize("action", ["play", "pause", "stop", "next", "previous"])
 def test_every_supported_transport_action_is_accepted(action):
     controller, heos = connected_controller()
-    client, monkey = make_client(controller=controller)
-    try:
-        response = client.post("/api/music/players/1/transport", json={"action": action})
-        assert response.status_code == 200
-        assert heos.players[1].calls[0][0] == action
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller)
+    response = client.post("/api/music/players/1/transport", json={"action": action})
+    assert response.status_code == 200
+    assert heos.players[1].calls[0][0] == action
 
 
 @pytest.mark.parametrize(
@@ -129,34 +126,25 @@ def test_an_unsupported_transport_action_is_rejected_before_the_speaker_sees_it(
     listing what there is. These used to all be hand-rolled 400s.
     """
     controller, heos = connected_controller()
-    client, monkey = make_client(controller=controller)
-    try:
-        assert client.post("/api/music/players/1/transport", json=body).status_code == status
-        assert heos.players[1].calls == []
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller)
+    assert client.post("/api/music/players/1/transport", json=body).status_code == status
+    assert heos.players[1].calls == []
 
 
 def test_a_command_for_an_unknown_player_is_404():
     controller, _ = connected_controller()
-    client, monkey = make_client(controller=controller)
-    try:
-        response = client.post(
-            "/api/music/players/77/transport", json={"action": "play"}
-        )
-        assert response.status_code == 404
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller)
+    response = client.post(
+        "/api/music/players/77/transport", json={"action": "play"}
+    )
+    assert response.status_code == 404
 
 
 def test_volume_is_set_when_it_is_in_range():
     controller, heos = connected_controller()
-    client, monkey = make_client(controller=controller)
-    try:
-        assert client.post("/api/music/players/1/volume", json={"level": 45}).status_code == 200
-        assert heos.players[1].calls == [("volume", 45)]
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller)
+    assert client.post("/api/music/players/1/volume", json={"level": 45}).status_code == 200
+    assert heos.players[1].calls == [("volume", 45)]
 
 
 @pytest.mark.parametrize("level", [-1, 101, "40", 40.5, None, True])
@@ -173,12 +161,9 @@ def test_an_out_of_range_or_wrongly_typed_volume_never_reaches_the_speaker(level
     field was wrong and what it wanted, and says so.
     """
     controller, heos = connected_controller()
-    client, monkey = make_client(controller=controller)
-    try:
-        assert client.post("/api/music/players/1/volume", json={"level": level}).status_code == 422
-        assert heos.players[1].calls == []
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller)
+    assert client.post("/api/music/players/1/volume", json={"level": level}).status_code == 422
+    assert heos.players[1].calls == []
 
 
 # --------------------------------------------------------------------------
@@ -191,40 +176,31 @@ def test_browsing_without_a_library_configured_is_503():
     what is already playing - so this is gated separately from the transport
     routes rather than turning the whole music UI off."""
     controller, _ = connected_controller()
-    client, monkey = make_client(controller=controller, library=None)
-    try:
-        assert client.get("/api/music/library").status_code == 503
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=None)
+    assert client.get("/api/music/library").status_code == 503
 
 
 def test_browsing_returns_one_level_at_a_time():
     controller, _ = connected_controller()
-    client, monkey = make_client(controller=controller, library=FakeLibrary())
-    try:
-        artists = client.get("/api/music/library?kind=artists").json()
-        assert artists["kind"] == "artists"
-        # sort_name rides along so the panel's A-Z rail can index on the same
-        # string the list was ordered by, rather than on a display name the
-        # library files under a different letter.
-        assert artists["items"] == [
-            {"id": "a1", "name": "The Artist", "sort_name": "Artist, The"}
-        ]
+    client = make_client(controller=controller, library=FakeLibrary())
+    artists = client.get("/api/music/library?kind=artists").json()
+    assert artists["kind"] == "artists"
+    # sort_name rides along so the panel's A-Z rail can index on the same
+    # string the list was ordered by, rather than on a display name the
+    # library files under a different letter.
+    assert artists["items"] == [
+        {"id": "a1", "name": "The Artist", "sort_name": "Artist, The"}
+    ]
 
-        tracks = client.get("/api/music/library?kind=tracks&parent=b1").json()
-        assert [t["title"] for t in tracks["items"]] == ["One", "Two"]
-    finally:
-        monkey.undo()
+    tracks = client.get("/api/music/library?kind=tracks&parent=b1").json()
+    assert [t["title"] for t in tracks["items"]] == ["One", "Two"]
 
 
 def test_asking_for_tracks_without_an_album_is_rejected():
     controller, _ = connected_controller()
-    client, monkey = make_client(controller=controller, library=FakeLibrary())
-    try:
-        assert client.get("/api/music/library?kind=tracks").status_code == 400
-        assert client.get("/api/music/library?kind=nonsense").status_code == 400
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=FakeLibrary())
+    assert client.get("/api/music/library?kind=tracks").status_code == 400
+    assert client.get("/api/music/library?kind=nonsense").status_code == 400
 
 
 def test_a_jellyfin_failure_is_reported_as_upstream_not_as_our_own():
@@ -232,110 +208,86 @@ def test_a_jellyfin_failure_is_reported_as_upstream_not_as_our_own():
     sending somebody into the HomeDash traceback."""
     controller, _ = connected_controller()
     library = FakeLibrary(error=JellyfinError("boom"))
-    client, monkey = make_client(controller=controller, library=library)
-    try:
-        assert client.get("/api/music/library?kind=artists").status_code == 502
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=library)
+    assert client.get("/api/music/library?kind=artists").status_code == 502
 
 
 def test_playing_an_album_queues_every_track_and_starts_the_first():
     controller, _ = connected_controller()
     queues, played = queue_manager()
-    client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
-    try:
-        response = client.post("/api/music/players/1/play", json={"album_id": "b1"})
-        assert response.status_code == 200
-        assert response.json() == {"ok": True, "queued": 2}
-        assert played == [(1, "http://h/t1")]
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+    response = client.post("/api/music/players/1/play", json={"album_id": "b1"})
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "queued": 2}
+    assert played == [(1, "http://h/t1")]
 
 
 def test_playing_on_an_unknown_player_is_404_before_anything_is_fetched():
     controller, _ = connected_controller()
     queues, played = queue_manager()
-    client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
-    try:
-        assert client.post("/api/music/players/99/play", json={"album_id": "b1"}).status_code == 404
-        assert played == []
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+    assert client.post("/api/music/players/99/play", json={"album_id": "b1"}).status_code == 404
+    assert played == []
 
 
 def test_playing_an_album_with_no_tracks_is_404_rather_than_silent_success():
     controller, _ = connected_controller()
     queues, _ = queue_manager()
-    client, monkey = make_client(
+    client = make_client(
         controller=controller, library=FakeLibrary(tracks=[]), queues=queues
     )
-    try:
-        assert client.post("/api/music/players/1/play", json={"album_id": "b1"}).status_code == 404
-    finally:
-        monkey.undo()
+    assert client.post("/api/music/players/1/play", json={"album_id": "b1"}).status_code == 404
 
 
 def test_play_requires_something_to_play():
     controller, _ = connected_controller()
     queues, _ = queue_manager()
-    client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
-    try:
-        assert client.post("/api/music/players/1/play", json={}).status_code == 400
-        # track_ids without the album they came from cannot be resolved.
-        assert (
-            client.post("/api/music/players/1/play", json={"track_ids": ["t1"]}).status_code
-            == 400
-        )
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+    assert client.post("/api/music/players/1/play", json={}).status_code == 400
+    # track_ids without the album they came from cannot be resolved.
+    assert (
+        client.post("/api/music/players/1/play", json={"track_ids": ["t1"]}).status_code
+        == 400
+    )
 
 
 def test_playing_a_subset_of_an_album_keeps_only_the_requested_tracks():
     controller, _ = connected_controller()
     queues, played = queue_manager()
-    client, monkey = make_client(controller=controller, library=FakeLibrary(), queues=queues)
-    try:
-        response = client.post(
-            "/api/music/players/1/play",
-            json={"track_ids": ["t2"], "parent_album_id": "b1"},
-        )
-        assert response.json()["queued"] == 1
-        assert played == [(1, "http://h/t2")]
-    finally:
-        monkey.undo()
+    client = make_client(controller=controller, library=FakeLibrary(), queues=queues)
+    response = client.post(
+        "/api/music/players/1/play",
+        json={"track_ids": ["t2"], "parent_album_id": "b1"},
+    )
+    assert response.json()["queued"] == 1
+    assert played == [(1, "http://h/t2")]
 
 
 def stream_client(library, tokens=None):
     """A client whose token store is real, so the route resolves what it minted."""
     controller, _ = connected_controller()
     tokens = tokens if tokens is not None else TokenStore("http://h")
-    client, monkey = make_client(controller=controller, library=library)
-    monkey.setattr(routes_module, "get_tokens", lambda: tokens)
-    return client, monkey, tokens
+    client = make_client(controller=controller, library=library)
+    _patches[-1].setattr(routes_module, "get_tokens", lambda: tokens)
+    return client, tokens
 
 
 def test_an_unknown_stream_token_is_404_and_never_reaches_jellyfin():
     library = FakeLibrary()
-    client, monkey, _ = stream_client(library)
-    try:
-        assert client.get("/api/music/s/not-a-token").status_code == 404
-        assert library.opened == []
-    finally:
-        monkey.undo()
+    client, _ = stream_client(library)
+    assert client.get("/api/music/s/not-a-token").status_code == 404
+    assert library.opened == []
 
 
 def test_the_stream_serves_what_the_source_opened():
     library = FakeLibrary(audio=b"the-audio", headers={"Content-Length": "9"})
-    client, monkey, tokens = stream_client(library)
-    try:
-        response = client.get(f"/api/music/s/{tokens.mint('t1')}")
-        assert response.status_code == 200
-        assert response.content == b"the-audio"
-        assert response.headers["content-type"] == "audio/flac"
-        assert response.headers["content-length"] == "9"
-        assert library.opened == [("t1", None)]
-    finally:
-        monkey.undo()
+    client, tokens = stream_client(library)
+    response = client.get(f"/api/music/s/{tokens.mint('t1')}")
+    assert response.status_code == 200
+    assert response.content == b"the-audio"
+    assert response.headers["content-type"] == "audio/flac"
+    assert response.headers["content-length"] == "9"
+    assert library.opened == [("t1", None)]
 
 
 def test_a_range_request_reaches_the_source_and_its_206_reaches_the_speaker():
@@ -345,45 +297,33 @@ def test_a_range_request_reaches_the_source_and_its_206_reaches_the_speaker():
         status=206,
         headers={"Content-Length": "10", "Content-Range": "bytes 10-19/100"},
     )
-    client, monkey, tokens = stream_client(library)
-    try:
-        response = client.get(
-            f"/api/music/s/{tokens.mint('t1')}", headers={"Range": "bytes=10-19"}
-        )
-        assert response.status_code == 206
-        assert response.headers["content-range"] == "bytes 10-19/100"
-        assert library.opened == [("t1", "bytes=10-19")]
-    finally:
-        monkey.undo()
+    client, tokens = stream_client(library)
+    response = client.get(
+        f"/api/music/s/{tokens.mint('t1')}", headers={"Range": "bytes=10-19"}
+    )
+    assert response.status_code == 206
+    assert response.headers["content-range"] == "bytes 10-19/100"
+    assert library.opened == [("t1", "bytes=10-19")]
 
 
 def test_the_stream_is_released_once_it_has_been_served():
     library = FakeLibrary()
-    client, monkey, tokens = stream_client(library)
-    try:
-        client.get(f"/api/music/s/{tokens.mint('t1')}")
-        assert library.closed == 1
-    finally:
-        monkey.undo()
+    client, tokens = stream_client(library)
+    client.get(f"/api/music/s/{tokens.mint('t1')}")
+    assert library.closed == 1
 
 
 @pytest.mark.parametrize("error", [JellyfinError("down"), AudioSourceError("down")])
 def test_a_source_that_cannot_open_the_audio_is_a_502(error):
     """Any source's failure, not only Jellyfin's: the fault is upstream either way."""
-    client, monkey, tokens = stream_client(FakeLibrary(error=error))
-    try:
-        assert client.get(f"/api/music/s/{tokens.mint('t1')}").status_code == 502
-    finally:
-        monkey.undo()
+    client, tokens = stream_client(FakeLibrary(error=error))
+    assert client.get(f"/api/music/s/{tokens.mint('t1')}").status_code == 502
 
 
 def test_the_stream_is_503_before_the_token_store_exists():
-    client, monkey = make_client(controller=None, library=FakeLibrary())
-    monkey.setattr(routes_module, "get_tokens", lambda: None)
-    try:
-        assert client.get("/api/music/s/anything").status_code == 503
-    finally:
-        monkey.undo()
+    client = make_client(controller=None, library=FakeLibrary())
+    _patches[-1].setattr(routes_module, "get_tokens", lambda: None)
+    assert client.get("/api/music/s/anything").status_code == 503
 
 
 # -- how a half-configured deployment announces itself ------------------------
@@ -495,12 +435,9 @@ class TestASpeakerThatHasGoneAway:
         """A read stays a 200 while the speakers are away, which is what lets
         the panel tell 'no speakers right now' from 'no music here at all'."""
         controller, heos = connected_controller()
-        client, monkey = make_client(controller=controller)
+        client = make_client(controller=controller)
         heos.connection_state = ConnectionState.DISCONNECTED
-        try:
-            payload = client.get("/api/music/players").json()
-        finally:
-            monkey.undo()
+        payload = client.get("/api/music/players").json()
 
         assert payload["connected"] is False
 
@@ -508,12 +445,9 @@ class TestASpeakerThatHasGoneAway:
         """A write does not get to pretend. 503 rather than an unhandled
         exception, and rather than a 200 the speaker never heard."""
         controller, heos = connected_controller()
-        client, monkey = make_client(controller=controller)
+        client = make_client(controller=controller)
         heos.connection_state = ConnectionState.DISCONNECTED
-        try:
-            response = client.post("/api/music/players/1/transport", json={"action": "play"})
-        finally:
-            monkey.undo()
+        response = client.post("/api/music/players/1/transport", json={"action": "play"})
 
         assert response.status_code == 503
 
@@ -527,21 +461,107 @@ class TestASpeakerThatHasGoneAway:
             raise CommandFailedError("player/set_play_state", "boom", 1, 2)
 
         monkeypatch.setattr(controller, "transport", refuse)
-        client, monkey = make_client(controller=controller)
-        try:
-            response = client.post("/api/music/players/1/transport", json={"action": "play"})
-        finally:
-            monkey.undo()
+        client = make_client(controller=controller)
+        response = client.post("/api/music/players/1/transport", json={"action": "play"})
 
         assert response.status_code == 502
 
     def test_an_unknown_player_is_still_404(self):
         """The one failure here that really is the caller's fault."""
         controller, _ = connected_controller()
-        client, monkey = make_client(controller=controller)
-        try:
-            response = client.post("/api/music/players/99/transport", json={"action": "play"})
-        finally:
-            monkey.undo()
+        client = make_client(controller=controller)
+        response = client.post("/api/music/players/99/transport", json={"action": "play"})
 
         assert response.status_code == 404
+
+
+class FakeArtLibrary(FakeLibrary):
+    def __init__(self, found=(b"jpeg", "image/jpeg"), art_error=None):
+        super().__init__()
+        self._found = found
+        self._art_error = art_error
+        self.art_calls = []
+
+    async def art(self, item_id, size):
+        self.art_calls.append((item_id, size))
+        if self._art_error:
+            raise self._art_error
+        return self._found
+
+
+class TestArt:
+    def client(self, library):
+        controller, _ = connected_controller()
+        return make_client(controller=controller, library=library)
+
+    def test_a_cover_is_served_with_its_type_and_a_cache_lifetime(self):
+        library = FakeArtLibrary(found=(b"png-bytes", "image/png"))
+        response = self.client(library).get("/api/music/art/a1?size=300")
+        assert response.status_code == 200
+        assert response.content == b"png-bytes"
+        assert response.headers["content-type"] == "image/png"
+        assert response.headers["cache-control"] == "public, max-age=3600"
+        assert library.art_calls == [("a1", 300)]
+
+    def test_the_size_defaults_to_what_the_panel_shows(self):
+        library = FakeArtLibrary()
+        self.client(library).get("/api/music/art/a1")
+        assert library.art_calls == [("a1", 480)]
+
+    @pytest.mark.parametrize("size,status", [(31, 400), (32, 200), (1920, 200), (1921, 400)])
+    def test_the_size_is_bounded_at_both_ends(self, size, status):
+        library = FakeArtLibrary()
+        response = self.client(library).get(f"/api/music/art/a1?size={size}")
+        assert response.status_code == status
+
+    def test_a_refused_size_never_reaches_jellyfin(self):
+        library = FakeArtLibrary()
+        self.client(library).get("/api/music/art/a1?size=9999")
+        assert library.art_calls == []
+
+    def test_no_cover_is_a_404(self):
+        assert self.client(FakeArtLibrary(found=None)).get("/api/music/art/a1").status_code == 404
+
+    def test_jellyfin_failing_is_a_502(self):
+        library = FakeArtLibrary(art_error=JellyfinError("down"))
+        assert self.client(library).get("/api/music/art/a1").status_code == 502
+
+    def test_with_no_library_it_is_a_503(self):
+        controller, _ = connected_controller()
+        client = make_client(controller=controller)
+        assert client.get("/api/music/art/a1").status_code == 503
+
+
+class TestCommandResponses:
+    """What the panel is told, not only that it was told something."""
+
+    def test_a_transport_command_reports_success(self):
+        controller, _ = connected_controller()
+        client = make_client(controller=controller)
+        response = client.post("/api/music/players/1/transport", json={"action": "play"})
+        assert response.json() == {"ok": True}
+
+    def test_a_volume_command_reports_success(self):
+        controller, _ = connected_controller()
+        client = make_client(controller=controller)
+        response = client.post("/api/music/players/1/volume", json={"level": 40})
+        assert response.json() == {"ok": True}
+
+    def test_a_volume_command_before_connecting_is_refused(self):
+        client = make_client(controller=None)
+        response = client.post("/api/music/players/1/volume", json={"level": 40})
+        assert response.status_code == 503
+
+    def test_a_url_too_long_for_the_speaker_is_a_loud_500(self, monkeypatch):
+        controller, _ = connected_controller()
+        library = FakeLibrary()
+        queues, _ = queue_manager()
+        client = make_client(controller=controller, library=library, queues=queues)
+
+        def too_long(*args, **kwargs):
+            raise UrlTooLong("stream URL is 300 characters")
+
+        monkeypatch.setattr(routes_module.get_playback(), "play", too_long)
+        response = client.post("/api/music/players/1/play", json={"album_id": "b1"})
+        assert response.status_code == 500
+        assert "300 characters" in response.json()["detail"]

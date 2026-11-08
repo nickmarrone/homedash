@@ -6,6 +6,9 @@ the response - a browse that asks the wrong question returns a perfectly valid
 list of the wrong things, and nothing downstream can tell.
 """
 
+import asyncio
+
+import httpx
 import pytest
 
 from app.music.jellyfin import JellyfinError, JellyfinLibrary
@@ -197,3 +200,90 @@ def test_a_trailing_slash_on_the_configured_url_does_not_double_up():
     """The .env example ends without one, but somebody will paste one in."""
     library, _ = build()
     assert "//Audio" not in library.stream_url("t1")
+
+
+@pytest.mark.parametrize("status_code", [400, 404, 500])
+def test_any_error_status_is_reported(status_code):
+    library, _ = build(status_code=status_code)
+    with pytest.raises(JellyfinError, match=str(status_code)):
+        library.artists()
+
+
+class RecordingClient:
+    """httpx.AsyncClient over a canned transport, noting that it was closed."""
+
+    closed = 0
+
+    def __new__(cls, handler):
+        class Client(httpx.AsyncClient):
+            async def aclose(self):
+                RecordingClient.closed += 1
+                await super().aclose()
+
+        def factory(**kwargs):
+            return Client(transport=httpx.MockTransport(handler), **kwargs)
+
+        return factory
+
+
+@pytest.fixture
+def respond(monkeypatch):
+    """Answer the adapter's async requests with `handler`."""
+
+    def install(handler):
+        RecordingClient.closed = 0
+        monkeypatch.setattr("app.music.jellyfin.httpx.AsyncClient", RecordingClient(handler))
+
+    return install
+
+
+def library() -> JellyfinLibrary:
+    return JellyfinLibrary("http://jf.local:8096/", "SECRET")
+
+
+class TestArt:
+    def test_a_cover_comes_back_with_its_type(self, respond):
+        respond(
+            lambda request: httpx.Response(
+                200, content=b"png", headers={"Content-Type": "image/png"}
+            )
+        )
+        assert asyncio.run(library().art("a1", 300)) == (b"png", "image/png")
+
+    def test_a_cover_with_no_type_is_assumed_to_be_a_jpeg(self, respond):
+        respond(lambda request: httpx.Response(200, content=b"x"))
+        assert asyncio.run(library().art("a1", 300))[1] == "image/jpeg"
+
+    @pytest.mark.parametrize("status", [204, 404, 500])
+    def test_anything_but_a_200_is_no_cover(self, respond, status):
+        respond(lambda request: httpx.Response(status))
+        assert asyncio.run(library().art("a1", 300)) is None
+
+    def test_an_unreachable_server_is_an_error(self, respond):
+        def refuse(request):
+            raise httpx.ConnectError("refused")
+
+        respond(refuse)
+        with pytest.raises(JellyfinError):
+            asyncio.run(library().art("a1", 300))
+
+
+class TestOpenStream:
+    @pytest.mark.parametrize("status", [400, 404, 500])
+    def test_an_error_status_is_raised_and_the_client_released(self, respond, status):
+        """Every play opens one of these, so a leak here is one socket per
+        failed track for as long as the container runs."""
+        respond(lambda request: httpx.Response(status))
+        with pytest.raises(JellyfinError):
+            asyncio.run(library().open_stream("t1"))
+        assert RecordingClient.closed == 1
+
+    def test_closing_a_good_stream_releases_the_client(self, respond):
+        respond(lambda request: httpx.Response(200, content=b"sound"))
+
+        async def scenario():
+            stream = await library().open_stream("t1")
+            await stream.close()
+
+        asyncio.run(scenario())
+        assert RecordingClient.closed == 1

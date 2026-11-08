@@ -209,3 +209,10 @@ class TestImage:
         )
 
         assert response.status_code == 200
+
+
+class TestImageOrientation:
+    def test_an_invalid_orientation_is_refused_before_looking_anything_up(self, client, session):
+        photo = add_photo(session)
+        response = client.get(f"/api/photos/{photo.id}/image", params={"orientation": "sideways"})
+        assert response.status_code == 400

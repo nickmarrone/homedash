@@ -7,13 +7,14 @@ only on a display that stays open for months.
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import app.scheduler as scheduler_module
 from app.api.routes import event_stream
-from app.config import ScreenScheduleConfig, Settings
+from app.config import BACKEND_ROOT, ScreenScheduleConfig, Settings
 from app.devices import PANEL_DEVICE_ID, screen_state
 from app.models import Device
 
@@ -81,7 +82,10 @@ class TestScheduling:
         """The panel reloads after three missed heartbeats (100s in
         frontend/src/lib/watchdog.ts). Keep this interval comfortably under a
         third of that, or a single slow beat becomes a reload."""
-        assert scheduler_module.HEARTBEAT_SECONDS <= 30
+        watchdog = (BACKEND_ROOT.parent / "frontend/src/lib/watchdog.ts").read_text()
+        stale_ms = int(re.search(r"STALE_AFTER_MS = ([\d_]+)", watchdog)[1].replace("_", ""))
+
+        assert scheduler_module.HEARTBEAT_SECONDS * 3 <= stale_ms / 1000
 
 
 class TestHeartbeatOnConnect:

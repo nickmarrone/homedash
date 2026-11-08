@@ -2,8 +2,9 @@
 
 The schema is created with `SQLModel.metadata.create_all` rather than by
 running Alembic: these tests exercise application logic, and paying the cost
-of the full migration history for every test buys nothing. `run_migrations`
-is still covered where it matters - by the app actually starting up.
+of the full migration history for every test buys nothing. The migrations
+have their own suite in test_migrations.py, and test_boot.py starts a real
+server against them.
 """
 
 from collections.abc import Iterator

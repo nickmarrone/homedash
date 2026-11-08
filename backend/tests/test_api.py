@@ -273,3 +273,33 @@ class TestCalendarClock:
         assert payload["now"].startswith(payload["today"])
         # Home timezone, not UTC - the same instants the events carry.
         assert payload["now"].endswith(("-04:00", "-05:00"))
+
+
+class TestCalendarLegend:
+    def test_it_lists_enabled_calendars_in_display_order(self, client, session):
+        for name, color, order in (("Second", "#111111", 2), ("First", "#222222", 1)):
+            session.add(
+                CalendarSource(
+                    kind="ics", name=name, color=color, url=f"https://x/{name}", display_order=order
+                )
+            )
+        session.commit()
+
+        legend = client.get("/api/calendars").json()
+
+        assert [(c["name"], c["color"]) for c in legend] == [
+            ("First", "#222222"),
+            ("Second", "#111111"),
+        ]
+        assert all(isinstance(c["id"], int) for c in legend)
+
+    def test_a_disabled_calendar_gets_no_chip(self, client, session):
+        session.add(CalendarSource(kind="ics", name="On", color="#111111", url="https://x/1"))
+        session.add(
+            CalendarSource(
+                kind="ics", name="Off", color="#222222", url="https://x/2", enabled=False
+            )
+        )
+        session.commit()
+
+        assert [c["name"] for c in client.get("/api/calendars").json()] == ["On"]

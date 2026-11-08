@@ -319,3 +319,20 @@ class TestTheSpeakerIsLeftUsable:
         run_(queues.on_state(1, "play"))
 
         assert [item.song for item in heos.players[1].queue] == ["http://h/t1"]
+
+
+# -- refused before the connection is up ----------------------------------------
+
+
+def test_setting_the_volume_before_connecting_says_so():
+    playback = with_library(unconnected_controller())
+    with pytest.raises(Unavailable):
+        run_(playback.set_volume(1, 40))
+
+
+def test_playing_before_connecting_blames_the_connection_not_the_player():
+    """Not UnknownPlayer: nothing is wrong with the panel's id, and the 404 it
+    would become would read as a speaker that has been unplugged."""
+    playback = with_library(unconnected_controller())
+    with pytest.raises(Unavailable):
+        run_(playback.play(1, "album"))

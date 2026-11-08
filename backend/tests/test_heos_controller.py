@@ -10,7 +10,14 @@ import asyncio
 
 import pytest
 
-from app.music.heos import HeosController, HeosSpeaker, MusicUnavailable
+from app.music import heos as heos_module
+from app.music.heos import (
+    _PROGRESS_EVENT,
+    _STATE_EVENT,
+    HeosController,
+    HeosSpeaker,
+    MusicUnavailable,
+)
 from fake_heos import FakeHeos, FakePlayer
 
 
@@ -253,8 +260,11 @@ class TestHeosSpeaker:
             raise RuntimeError("command not supported")
 
         monkeypatch.setattr(heos.players[1], "get_queue", unsupported)
+        before = list(heos.players[1].queue)
 
         asyncio.run(HeosSpeaker(controller).prune_queue(1))
+
+        assert heos.players[1].queue == before
 
     def test_playing_and_stopping_are_not_best_effort(self):
         """Only the tidying is forgiven. A play or a stop that fails must
@@ -277,3 +287,160 @@ class TestHeosSpeaker:
             ("stop",),
         ]
 
+
+
+class TestPushedEvents:
+    """What a speaker's event does. This is the wire the album hangs on: the
+    queue only ever advances because a state change arrived through here."""
+
+    def wired(self):
+        log = []
+
+        async def on_state(player_id, state):
+            log.append(("queue", player_id, state))
+
+        def on_change():
+            log.append(("panel",))
+
+        heos = FakeHeos()
+
+        async def connect(host):
+            return heos
+
+        controller = HeosController(
+            "10.0.0.5", on_change=on_change, on_state=on_state, connect=connect
+        )
+        asyncio.run(controller._run())
+        return controller, heos, log
+
+    def test_connecting_subscribes_to_the_speakers(self):
+        _, heos, _ = self.wired()
+        assert sum(len(targets) for targets in heos.dispatcher.handlers.values()) == 1
+
+    def test_a_state_change_reaches_the_queue_and_then_the_panel(self):
+        """In that order, or the panel flashes 'nothing playing' between tracks."""
+        controller, heos, log = self.wired()
+        heos.players[1].state = heos_module.PlayState.STOP
+
+        asyncio.run(controller._handle_player_event(1, _STATE_EVENT))
+
+        assert log == [("queue", 1, "stop"), ("panel",)]
+
+    def test_other_events_wake_the_panel_but_leave_the_queue_alone(self):
+        controller, _, log = self.wired()
+        asyncio.run(controller._handle_player_event(1, "player_volume_changed"))
+        assert log == [("panel",)]
+
+    def test_progress_ticks_wake_nothing(self):
+        controller, _, log = self.wired()
+        asyncio.run(controller._handle_player_event(1, _PROGRESS_EVENT))
+        assert log == []
+
+    def test_a_state_change_for_an_unknown_speaker_skips_the_queue(self):
+        controller, _, log = self.wired()
+        asyncio.run(controller._handle_player_event(404, _STATE_EVENT))
+        assert log == [("panel",)]
+
+    def test_a_failing_queue_still_tells_the_panel(self, caplog):
+        controller, heos, log = self.wired()
+
+        async def broken(player_id, state):
+            raise RuntimeError("boom")
+
+        controller._on_state = broken
+        asyncio.run(controller._handle_player_event(1, _STATE_EVENT))
+
+        assert log == [("panel",)]
+        assert "Queue failed" in caplog.text
+
+    def test_with_no_listeners_an_event_is_harmless(self):
+        controller, _ = build()
+        asyncio.run(controller._handle_player_event(1, _STATE_EVENT))
+
+
+class TestConnectionLifecycle:
+    def test_it_keeps_trying_until_the_speakers_answer(self, monkeypatch):
+        """They are usually asleep at boot."""
+        monkeypatch.setattr(heos_module, "_INITIAL_RETRY_SECONDS", 0)
+        heos = FakeHeos()
+        attempts = []
+
+        async def connect(host):
+            attempts.append(host)
+            if len(attempts) < 3:
+                raise OSError("no route to host")
+            return heos
+
+        controller = HeosController("10.0.0.5", connect=connect)
+        asyncio.run(controller._run())
+
+        assert len(attempts) == 3
+        assert controller.connected is True
+
+    def test_it_waits_between_attempts(self, monkeypatch):
+        waits = []
+
+        async def sleep(seconds):
+            waits.append(seconds)
+
+        monkeypatch.setattr(heos_module.asyncio, "sleep", sleep)
+        heos = FakeHeos()
+        failures = [OSError("down")]
+
+        async def connect(host):
+            if failures:
+                raise failures.pop()
+            return heos
+
+        asyncio.run(HeosController("10.0.0.5", connect=connect)._run())
+        assert waits == [heos_module._INITIAL_RETRY_SECONDS]
+
+    def test_stop_abandons_a_connection_still_being_attempted(self):
+        async def scenario():
+            never = asyncio.Event()
+
+            async def connect(host):
+                await never.wait()
+
+            controller = HeosController("10.0.0.5", connect=connect)
+            controller.start()
+            await asyncio.sleep(0)
+            await controller.stop()
+            await asyncio.sleep(0)
+            return controller._task.cancelled()
+
+        assert asyncio.run(scenario()) is True
+
+    def test_stop_unsubscribes_and_disconnects(self):
+        controller, heos = build()
+        asyncio.run(controller.stop())
+        assert all(targets == [] for targets in heos.dispatcher.handlers.values())
+        assert heos.disconnected is True
+
+    def test_a_failed_disconnect_does_not_stop_the_shutdown(self, monkeypatch, caplog):
+        controller, heos = build()
+
+        async def fail():
+            raise OSError("already gone")
+
+        monkeypatch.setattr(heos, "disconnect", fail)
+        asyncio.run(controller.stop())
+        assert "Error disconnecting" in caplog.text
+
+    def test_stopping_before_connecting_is_fine(self):
+        asyncio.run(HeosController("10.0.0.5").stop())
+
+    def test_the_real_connection_reconnects_and_limits_progress_events(self, monkeypatch):
+        """`auto_reconnect` is the difference between a wifi blip and a music
+        screen that silently never updates again."""
+        seen = {}
+
+        class RealHeos:
+            @staticmethod
+            async def create_and_connect(host, **kwargs):
+                seen.update(host=host, **kwargs)
+                return "connected"
+
+        monkeypatch.setattr(heos_module, "Heos", RealHeos)
+        assert asyncio.run(heos_module._connect_to_heos("10.0.0.5")) == "connected"
+        assert seen == {"host": "10.0.0.5", "auto_reconnect": True, "all_progress_events": False}

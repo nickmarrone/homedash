@@ -822,6 +822,28 @@ and errors on clearing an empty queue, because a fake that is convenient about
 either of those is a fake that would let this back in. Not yet run against the
 real speakers — that is the one step this cannot verify from here.
 
+### Real test coverage for the panel (2026-11-08)
+
+Until now the frontend had a type check and nothing else, and the browser harness
+was run by hand, asserted almost nothing, and started from an empty database.
+
+- **Three layers, split by what each can see.** Vitest for the plain `.ts` modules,
+  Playwright in real Chrome for anything that renders, and a backend test that
+  boots a real server. All three run in CI.
+- **The stream is faked at `EventSource`.** A stubbed HTTP response cannot stay open
+  and push, and a fake lets a test decide exactly when a heartbeat lands - which is
+  how the midnight bug below was reachable at all. One spec runs with nothing
+  stubbed, and compares the stub's shapes with the real API so the two cannot drift.
+- **Line coverage was the wrong measure of the backend.** It reported 77%, and the
+  gaps it showed were real, but mutation testing was what showed which well-covered
+  code was barely being checked: the wire that advances an album, both edges of the
+  one calendar query, and the transparency handling had all been executed by tests
+  that would not have noticed them breaking.
+- **Six bugs came out of it**, filed as #19 to #24: the tap that dismisses the screensaver also presses what is under it, a slow
+  response can replace a newer view, yesterday's events linger on today's agenda,
+  floating times are read as UTC, a midnight rollover can be swallowed, and the
+  slideshow can repeat photos across a reshuffle.
+
 ---
 
 ---

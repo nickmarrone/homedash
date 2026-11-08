@@ -47,6 +47,28 @@ then `npx playwright install chromium` and drop `channel` from `LAUNCH` in
   (`net_error -202`) because the sandbox proxy MITMs it. This bites anything
   loading Google Fonts or a remote API from the browser.
 
+## The test suite
+
+`tests/` is the panel's real test suite, and CI runs it. It drives real Chrome at
+both 1920x1080 and 1080x1920 and asserts on the page rather than on screenshots.
+
+```bash
+cd tools/panel
+npm test                       # builds the panel, then runs everything
+npx playwright test --ui       # to watch or step through one
+```
+
+Two things are worth knowing before adding to it:
+
+- **The API and the event stream are stubbed** (`tests/support/`), so a test can
+  say exactly what the server answers and when. `real-backend.spec.mjs` is the
+  one run with nothing stubbed, and it also checks that the stub's response
+  shapes still match the real API.
+- **Use `panel.passTime()` to move the clock.** A bare `page.clock.fastForward`
+  past 100 seconds is a silent stream, so the watchdog reloads the page mid-test.
+
+The commands below are for looking at the panel by hand.
+
 ## Use
 
 ```bash

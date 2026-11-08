@@ -30,6 +30,15 @@ class TestNeedsFullResync:
     def test_a_source_never_fully_synced_needs_one(self):
         assert needs_full_resync(source(), NOW) is True
 
+    def test_it_is_due_at_exactly_the_interval(self):
+        interval = timedelta(minutes=sync_module.settings.full_resync_interval_minutes)
+        assert needs_full_resync(source(last_full_sync_at=NOW - interval), NOW) is True
+
+    def test_it_is_not_due_a_second_before_the_interval(self):
+        interval = timedelta(minutes=sync_module.settings.full_resync_interval_minutes)
+        almost = NOW - interval + timedelta(seconds=1)
+        assert needs_full_resync(source(last_full_sync_at=almost), NOW) is False
+
     def test_a_source_synced_minutes_ago_does_not(self):
         assert needs_full_resync(source(last_full_sync_at=NOW - timedelta(minutes=5)), NOW) is False
 
