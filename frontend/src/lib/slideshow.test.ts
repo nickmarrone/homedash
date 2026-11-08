@@ -81,6 +81,23 @@ describe('createSlideshow', () => {
 		}
 	});
 
+	it('does not put the same photo on screen twice running across the seam', () => {
+		for (const seed of SEEDS) {
+			const slides = take([...full(1), ...half(2, 3)], 300, seed);
+			for (let i = 1; i < slides.length; i++) {
+				const shared = ids(slides[i]).filter((id) => ids(slides[i - 1]).includes(id));
+				expect(shared, `seed ${seed}, slide ${i}`).toEqual([]);
+			}
+		}
+	});
+
+	it('still shows something when every slide shares a photo with the last one', () => {
+		// Three half photos make two slides, and a pair can overlap both.
+		for (const seed of SEEDS) {
+			expect(take(half(1, 2, 3), 50, seed).every((slide) => slide.photos.length > 0)).toBe(true);
+		}
+	});
+
 	it('terminates on a random source stuck at one end', () => {
 		for (const value of [0, 0.999999]) {
 			const show = createSlideshow(full(1, 2, 3), () => value);
