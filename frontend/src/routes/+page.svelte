@@ -17,7 +17,7 @@
 	} from '$lib/api';
 	import { createOrientation } from '$lib/orientation.svelte';
 	import { createMusic } from '$lib/music.svelte';
-	import { startIdleTimer, type IdleTimer } from '$lib/idle';
+	import { startIdleTimer, swallowNextClick, type IdleTimer } from '$lib/idle';
 	import { startWatchdog } from '$lib/watchdog';
 	import { startBackoff } from '$lib/retry';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
@@ -173,7 +173,12 @@
 		idleTimer = startIdleTimer({
 			idleAfterMs: Math.max(1, idleMinutes) * 60_000,
 			onIdle: () => (idle = true),
-			onActive: () => (idle = false)
+			onActive: () => {
+				// This runs during the pointerdown, so the slideshow is gone before
+				// the finger lifts and the click would land on the calendar.
+				if (screensaverOn) swallowNextClick();
+				idle = false;
+			}
 		});
 	}
 
