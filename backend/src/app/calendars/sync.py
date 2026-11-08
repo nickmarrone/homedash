@@ -1,8 +1,8 @@
 import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import recurring_ical_events
 from icalendar import Calendar
