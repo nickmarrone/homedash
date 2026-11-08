@@ -17,7 +17,7 @@ from app.music.heos import HeosController, HeosSpeaker
 from app.music.jellyfin import JellyfinLibrary
 from app.music.playback import Playback
 from app.music.queue import QueueManager
-from app.music.tokens import TokenStore, stream_url
+from app.music.tokens import TokenStore
 from app.sse import broadcaster
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ def start_music() -> None:
         _library = JellyfinLibrary(
             settings.jellyfin_url, settings.jellyfin_api_key, settings.jellyfin_music_library_id
         )
-        _tokens = TokenStore()
+        _tokens = TokenStore(settings.public_base_url)
         _queues = QueueManager(speaker=HeosSpeaker(_controller), url_for=_url_for)
         if not settings.public_base_url:
             logger.warning(
@@ -143,7 +143,7 @@ def _url_for(track) -> str:
     it still resolved.
     """
     assert _tokens is not None
-    return stream_url(settings.public_base_url, _tokens.mint(track.id))
+    return _tokens.url_for(track.id)
 
 
 async def _on_player_state(player_id: int, state: str) -> None:

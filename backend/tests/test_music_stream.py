@@ -6,16 +6,18 @@ on any screen, the panel never calls it, and when it goes wrong the symptom is
 a speaker playing silence.
 
 Driven through `JellyfinLibrary.open_stream` against a fake transport rather
-than over HTTP, because what is worth pinning is the contract the route relies
-on - what it opens, what it forwards, and that it closes both objects. The
-route on top of it is six lines of turning that into a response.
+than over HTTP, because what is worth pinning is what a source hands the route:
+what it opens, what it forwards, and that it lets go afterwards. The route's
+side of it is tested over HTTP in `test_music_api.py`.
 """
 
 import asyncio
 
+import anyio
 import httpx
 import pytest
 
+from app.music.base import AudioStream
 from app.music.jellyfin import JellyfinError, JellyfinLibrary
 
 AUDIO = b"\xff\xfb" + b"sound" * 200
@@ -38,14 +40,22 @@ def streaming(status: int, body: bytes = b"", headers: dict | None = None) -> ht
 
 
 @pytest.fixture
-def patched(monkeypatch):
+def opened_clients():
+    """Every AsyncClient `patched` builds, so a test can ask whether it closed."""
+    return []
+
+
+@pytest.fixture
+def patched(monkeypatch, opened_clients):
     """Point httpx.AsyncClient inside jellyfin.py at a fake transport."""
 
     def install(handler):
         original = httpx.AsyncClient
 
         def factory(*args, **kwargs):
-            return original(*args, transport=httpx.MockTransport(handler), **kwargs)
+            client = original(*args, transport=httpx.MockTransport(handler), **kwargs)
+            opened_clients.append(client)
+            return client
 
         monkeypatch.setattr("app.music.jellyfin.httpx.AsyncClient", factory)
         return JellyfinLibrary("http://jelly:8096", "secret-key")
@@ -58,13 +68,8 @@ def run(coro):
 
 
 async def drain(lib, track_id, range_header=None):
-    response, client = await lib.open_stream(track_id, range_header)
-    try:
-        chunks = [chunk async for chunk in response.aiter_raw()]
-    finally:
-        await response.aclose()
-        await client.aclose()
-    return response, b"".join(chunks)
+    stream = await lib.open_stream(track_id, range_header)
+    return stream, b"".join([chunk async for chunk in stream.body()])
 
 
 class TestFetchingTheWholeTrack:
@@ -176,31 +181,101 @@ class TestFailures:
         with pytest.raises(JellyfinError):
             run(patched(refuse).open_stream("t1"))
 
-    def test_a_failure_does_not_leak_the_client(self, patched):
+    def test_a_failure_does_not_leak_the_client(self, patched, opened_clients):
         """The client is created before the request and outlives the function
         on the happy path, so every failure branch has to close it by hand.
         A leak here is one dangling connection per failed track."""
-        opened = []
+        lib = patched(lambda request: httpx.Response(500))
 
-        def handler(request):
-            return httpx.Response(500)
+        with pytest.raises(JellyfinError):
+            run(lib.open_stream("t1"))
 
-        lib = patched(handler)
+        assert opened_clients and all(c.is_closed for c in opened_clients)
 
-        import app.music.jellyfin as jf
 
-        real_factory = jf.httpx.AsyncClient
+class TestWhatGoesToTheSpeaker:
+    def test_only_the_headers_needed_to_seek_are_forwarded(self, patched):
+        """Content-Encoding above all: the bytes are raw, so forwarding one
+        would be claiming something about them that the proxy cannot vouch for."""
+        lib = patched(
+            lambda request: streaming(
+                200,
+                AUDIO,
+                {
+                    "Content-Length": str(len(AUDIO)),
+                    "Accept-Ranges": "bytes",
+                    "Content-Encoding": "gzip",
+                    "Server": "Kestrel",
+                },
+            )
+        )
 
-        def tracking(*args, **kwargs):
-            client = real_factory(*args, **kwargs)
-            opened.append(client)
-            return client
+        stream, _ = run(drain(lib, "t1"))
 
-        jf.httpx.AsyncClient = tracking
-        try:
-            with pytest.raises(JellyfinError):
-                run(lib.open_stream("t1"))
-        finally:
-            jf.httpx.AsyncClient = real_factory
+        assert set(stream.headers) == {"content-length", "accept-ranges"}
 
-        assert opened and all(c.is_closed for c in opened)
+    def test_the_upstream_content_type_is_kept(self, patched):
+        lib = patched(lambda request: streaming(200, AUDIO, {"Content-Type": "audio/flac"}))
+
+        stream, _ = run(drain(lib, "t1"))
+
+        assert stream.media_type == "audio/flac"
+
+    def test_a_missing_content_type_is_assumed_to_be_audio(self, patched):
+        lib = patched(lambda request: streaming(200, AUDIO))
+
+        stream, _ = run(drain(lib, "t1"))
+
+        assert stream.media_type == "audio/mpeg"
+
+
+class TestLettingGo:
+    def test_the_client_is_closed_once_the_track_has_been_read(self, patched, opened_clients):
+        run(drain(patched(lambda request: streaming(200, AUDIO)), "t1"))
+
+        assert opened_clients and all(c.is_closed for c in opened_clients)
+
+    def test_the_client_is_closed_when_the_speaker_hangs_up_early(self, patched, opened_clients):
+        """Routine rather than exceptional: a skip abandons the fetch partway."""
+        lib = patched(lambda request: streaming(200, AUDIO))
+
+        async def read_one_chunk():
+            stream = await lib.open_stream("t1")
+            body = stream.body()
+            await anext(body)
+            await body.aclose()
+
+        run(read_one_chunk())
+
+        assert opened_clients and all(c.is_closed for c in opened_clients)
+
+
+def test_cleanup_finishes_even_when_the_fetch_is_cancelled():
+    """How a disconnect actually arrives under Starlette: the task group's scope
+    is cancelled while the body is waiting on its next chunk. An unshielded
+    cleanup would die on its own first await, and the ones after it never run."""
+    closed = []
+
+    async def chunks():
+        yield b"first"
+        await anyio.sleep_forever()
+
+    async def close():
+        await anyio.sleep(0)
+        closed.append(True)
+
+    async def scenario():
+        stream = AudioStream(200, "audio/mpeg", {}, chunks(), close)
+
+        async def consume():
+            async for _ in stream.body():
+                pass
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(consume)
+            await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
+
+    run(scenario())
+
+    assert closed == [True]

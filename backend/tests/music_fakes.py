@@ -2,7 +2,7 @@
 
 import asyncio
 
-from app.music.base import Album, Artist, Track
+from app.music.base import Album, Artist, AudioStream, Track
 from app.music.heos import HeosController, HeosSpeaker
 from app.music.queue import QueueManager
 from fake_heos import FakeHeos
@@ -37,7 +37,12 @@ def unconnected_controller():
 class FakeLibrary:
     """Just enough JellyfinLibrary for Playback and the routes."""
 
-    def __init__(self, tracks=None, error=None):
+    def __init__(self, tracks=None, error=None, audio=b"sound", status=200, headers=None):
+        self._audio = audio
+        self._status = status
+        self._audio_headers = headers or {}
+        self.opened: list[tuple[str, str | None]] = []
+        self.closed = 0
         self._tracks = tracks if tracks is not None else [
             Track(
                 id="t1",
@@ -76,6 +81,18 @@ class FakeLibrary:
     def tracks(self, album_id):
         self._maybe_fail()
         return list(self._tracks)
+
+    async def open_stream(self, item_id, range_header=None):
+        self._maybe_fail()
+        self.opened.append((item_id, range_header))
+
+        async def chunks():
+            yield self._audio
+
+        async def close():
+            self.closed += 1
+
+        return AudioStream(self._status, "audio/flac", self._audio_headers, chunks(), close)
 
 
 class RecordingSpeaker:

@@ -14,6 +14,7 @@ from pyheos import CommandFailedError, ConnectionState
 
 from app.api.routes import music as routes_module
 from app.api.routes import router
+from app.music.base import AudioSourceError
 from app.music.jellyfin import JellyfinError
 from app.music.playback import Playback
 from app.music.tokens import TokenStore
@@ -304,13 +305,83 @@ def test_playing_a_subset_of_an_album_keeps_only_the_requested_tracks():
         monkey.undo()
 
 
-def test_an_unknown_stream_token_is_404_and_never_reaches_jellyfin():
+def stream_client(library, tokens=None):
+    """A client whose token store is real, so the route resolves what it minted."""
     controller, _ = connected_controller()
-    tokens = TokenStore()
-    client, monkey = make_client(controller=controller, library=FakeLibrary())
+    tokens = tokens if tokens is not None else TokenStore("http://h")
+    client, monkey = make_client(controller=controller, library=library)
     monkey.setattr(routes_module, "get_tokens", lambda: tokens)
+    return client, monkey, tokens
+
+
+def test_an_unknown_stream_token_is_404_and_never_reaches_jellyfin():
+    library = FakeLibrary()
+    client, monkey, _ = stream_client(library)
     try:
         assert client.get("/api/music/s/not-a-token").status_code == 404
+        assert library.opened == []
+    finally:
+        monkey.undo()
+
+
+def test_the_stream_serves_what_the_source_opened():
+    library = FakeLibrary(audio=b"the-audio", headers={"Content-Length": "9"})
+    client, monkey, tokens = stream_client(library)
+    try:
+        response = client.get(f"/api/music/s/{tokens.mint('t1')}")
+        assert response.status_code == 200
+        assert response.content == b"the-audio"
+        assert response.headers["content-type"] == "audio/flac"
+        assert response.headers["content-length"] == "9"
+        assert library.opened == [("t1", None)]
+    finally:
+        monkey.undo()
+
+
+def test_a_range_request_reaches_the_source_and_its_206_reaches_the_speaker():
+    """The route decides neither: HEOS asks, and the source answers."""
+    library = FakeLibrary(
+        audio=b"0123456789",
+        status=206,
+        headers={"Content-Length": "10", "Content-Range": "bytes 10-19/100"},
+    )
+    client, monkey, tokens = stream_client(library)
+    try:
+        response = client.get(
+            f"/api/music/s/{tokens.mint('t1')}", headers={"Range": "bytes=10-19"}
+        )
+        assert response.status_code == 206
+        assert response.headers["content-range"] == "bytes 10-19/100"
+        assert library.opened == [("t1", "bytes=10-19")]
+    finally:
+        monkey.undo()
+
+
+def test_the_stream_is_released_once_it_has_been_served():
+    library = FakeLibrary()
+    client, monkey, tokens = stream_client(library)
+    try:
+        client.get(f"/api/music/s/{tokens.mint('t1')}")
+        assert library.closed == 1
+    finally:
+        monkey.undo()
+
+
+@pytest.mark.parametrize("error", [JellyfinError("down"), AudioSourceError("down")])
+def test_a_source_that_cannot_open_the_audio_is_a_502(error):
+    """Any source's failure, not only Jellyfin's: the fault is upstream either way."""
+    client, monkey, tokens = stream_client(FakeLibrary(error=error))
+    try:
+        assert client.get(f"/api/music/s/{tokens.mint('t1')}").status_code == 502
+    finally:
+        monkey.undo()
+
+
+def test_the_stream_is_503_before_the_token_store_exists():
+    client, monkey = make_client(controller=None, library=FakeLibrary())
+    monkey.setattr(routes_module, "get_tokens", lambda: None)
+    try:
+        assert client.get("/api/music/s/anything").status_code == 503
     finally:
         monkey.undo()
 

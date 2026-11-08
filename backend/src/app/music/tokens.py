@@ -49,12 +49,34 @@ class StreamToken:
 
 
 class TokenStore:
-    """Maps short tokens to Jellyfin track ids."""
+    """Maps short tokens to Jellyfin track ids, and builds the URLs that carry them."""
 
-    def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS, now=time.monotonic) -> None:
+    def __init__(
+        self,
+        public_base_url: str,
+        ttl_seconds: float = DEFAULT_TTL_SECONDS,
+        now=time.monotonic,
+    ) -> None:
+        self._base_url = public_base_url.rstrip("/")
         self._ttl = ttl_seconds
         self._now = now
         self._tokens: dict[str, StreamToken] = {}
+
+    def url_for(self, track_id: str) -> str:
+        """A fresh URL to hand a speaker, checked against the limit it will accept.
+
+        Raising rather than truncating or warning: a URL over the limit produces
+        a speaker that accepts the command and plays nothing, which is close to
+        undiagnosable from the kitchen. Failing here puts it in the log instead.
+        """
+        url = f"{self._base_url}/api/music/s/{self.mint(track_id)}"
+        if len(url) > MAX_URL_LENGTH:
+            raise UrlTooLong(
+                f"stream URL is {len(url)} characters; HEOS will not fetch more than "
+                f"{MAX_URL_LENGTH} and reports no error when it declines. Shorten "
+                f"HOMEDASH_PUBLIC_BASE_URL ({self._base_url!r})."
+            )
+        return url
 
     def mint(self, track_id: str) -> str:
         self._evict()
@@ -85,20 +107,3 @@ class TokenStore:
 
     def __len__(self) -> int:
         return len(self._tokens)
-
-
-def stream_url(base_url: str, token: str) -> str:
-    """The URL to hand a speaker, checked against the limit it will accept.
-
-    Raising rather than truncating or warning: a URL over the limit produces a
-    speaker that accepts the command and plays nothing, which is close to
-    undiagnosable from the kitchen. Failing here puts it in the log instead.
-    """
-    url = f"{base_url.rstrip('/')}/api/music/s/{token}"
-    if len(url) > MAX_URL_LENGTH:
-        raise UrlTooLong(
-            f"stream URL is {len(url)} characters; HEOS will not fetch more than "
-            f"{MAX_URL_LENGTH} and reports no error when it declines. Shorten "
-            f"HOMEDASH_PUBLIC_BASE_URL ({base_url!r})."
-        )
-    return url

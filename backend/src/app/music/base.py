@@ -11,8 +11,15 @@ the app: nothing in this codebase validates its own outbound shapes, and the
 API layer builds its dicts by hand.
 """
 
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
+
+import anyio
+
+
+class AudioSourceError(RuntimeError):
+    """Raised when a source cannot open the audio it was asked for."""
 
 
 @dataclass(frozen=True)
@@ -65,4 +72,45 @@ class MusicLibrary(Protocol):
 
     def tracks(self, album_id: str) -> list[Track]:
         """One album's tracks, in playing order."""
+        ...
+
+
+@dataclass(frozen=True)
+class AudioStream:
+    """Audio that is open and ready to serve, exactly as the speaker should get it.
+
+    Everything that differs between sources is decided by the source and carried
+    here: a proxied file answers 206 with a Content-Range, a transcode answers 200
+    with neither, and what has to be released afterwards is a connection for one
+    and a process for the other. The route copies these onto a response and has
+    no opinion about any of them.
+    """
+
+    status_code: int
+    media_type: str
+    headers: Mapping[str, str]
+    chunks: AsyncIterator[bytes]
+    close: Callable[[], Awaitable[None]]
+
+    async def body(self) -> AsyncIterator[bytes]:
+        """The bytes, releasing the source however the fetch ends.
+
+        A streaming response is pulled long after the handler that opened it
+        has returned, so this is the only place left that sees the end of it.
+
+        Shielded because a speaker hanging up mid-track is routine, and arrives
+        here as a cancellation that would otherwise also cancel the first await
+        inside `close()` and leave the rest of the cleanup undone.
+        """
+        try:
+            async for chunk in self.chunks:
+                yield chunk
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self.close()
+
+
+class AudioSource(Protocol):
+    async def open_stream(self, item_id: str, range_header: str | None = None) -> AudioStream:
+        """Open one item's audio without reading it, or raise AudioSourceError."""
         ...

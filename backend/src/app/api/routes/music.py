@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.music.base import AudioSourceError
 from app.music.heos import TRANSPORT_ACTIONS
 from app.music.jellyfin import JellyfinError, JellyfinLibrary
 from app.music.playback import (
@@ -218,31 +219,15 @@ async def get_music_stream(token: str, request: Request) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="unknown or expired stream token")
 
     try:
-        upstream, client = await library.open_stream(track_id, request.headers.get("range"))
-    except JellyfinError as exc:
+        stream = await library.open_stream(track_id, request.headers.get("range"))
+    except AudioSourceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from None
 
-    async def body():
-        # The client outlives this function, so it is closed here rather than
-        # in a context manager: returning a StreamingResponse means the bytes
-        # are pulled long after the handler has returned.
-        try:
-            async for chunk in upstream.aiter_raw():
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
-
-    passthrough = {
-        name: upstream.headers[name]
-        for name in ("content-length", "content-range", "accept-ranges")
-        if name in upstream.headers
-    }
     return StreamingResponse(
-        body(),
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("Content-Type", "audio/mpeg"),
-        headers=passthrough,
+        stream.body(),
+        status_code=stream.status_code,
+        media_type=stream.media_type,
+        headers=dict(stream.headers),
     )
 
 
