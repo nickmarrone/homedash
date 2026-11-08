@@ -124,9 +124,17 @@
 		items = await fetchAgenda();
 	}
 
+	// Which loadGrid call is the latest. Two taps in quick succession race, and
+	// without this whichever response arrives last is what stays on screen, under
+	// the highlighted tab of the other view.
+	let latestGridLoad = 0;
+
 	async function loadGrid() {
 		if (view === 'agenda') return;
-		grid = await fetchCalendarView(view, anchor ?? undefined);
+		const thisLoad = ++latestGridLoad;
+		const next = await fetchCalendarView(view, anchor ?? undefined);
+		if (thisLoad !== latestGridLoad) return;
+		grid = next;
 		// Set the clock from the same response that carried the events, so the
 		// first render already knows which of them are over. Waiting for the
 		// heartbeat leaves a freshly loaded panel showing a whole morning of

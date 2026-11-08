@@ -143,6 +143,37 @@ test('changing view forgets where paging had got to', async ({ page, panel }) =>
   await expect(panel.periodTitle).toHaveText(`day of ${TODAY}`);
 });
 
+test('the slower of two view switches does not win', async ({ page, api, panel }) => {
+  await panel.open();
+  const releaseWeek = api.hold('view=week');
+  await panel.select('Week');
+  await panel.select('Day');
+  await expect(panel.periodTitle).toHaveText(`day of ${TODAY}`);
+
+  releaseWeek();
+  await expect
+    .poll(() => api.count('GET /api/calendar?view=week'))
+    .toBeGreaterThan(0);
+  await page.waitForTimeout(200);
+
+  await expect(panel.periodTitle).toHaveText(`day of ${TODAY}`);
+  await expect(page.locator('.columns section')).toHaveCount(1);
+});
+
+test('the slower of two pages does not win', async ({ page, api, panel }) => {
+  await panel.open();
+  await panel.select('Day');
+  const next = page.getByRole('button', { name: 'Next', exact: true });
+  const releaseFirst = api.hold(`anchor=${addDays(TODAY, 1)}`);
+  await next.click();
+  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await expect(panel.periodTitle).toHaveText(`day of ${TODAY}`);
+
+  releaseFirst();
+  await page.waitForTimeout(200);
+  await expect(panel.periodTitle).toHaveText(`day of ${TODAY}`);
+});
+
 test('tap targets are at least the 48px this project promises', async ({ page, panel }) => {
   await panel.open();
   await expect(panel.periodTitle).toBeVisible();
