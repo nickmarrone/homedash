@@ -50,7 +50,10 @@ test('never starts with no photos to show', async ({ page, api, panel }) => {
 test('a tap brings the calendar back and restarts the wait', async ({ page, panel }) => {
   await panel.open();
   await goIdle(page, panel);
-  await saver(page).click();
+  // A raw click rather than locator.click(), which checks the element again
+  // while clicking. The overlay is gone by then, and on a slow machine that
+  // retries until the test times out.
+  await page.mouse.click(5, 5);
   await expect(saver(page)).toHaveCount(0);
   await expect(page.locator('h1')).toBeVisible();
 
