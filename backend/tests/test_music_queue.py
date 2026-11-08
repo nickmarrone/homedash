@@ -566,3 +566,13 @@ class TestGivingTheSpeakerBack:
             "http://h/t1",
             "http://h/t2",
         ]
+
+
+def test_previous_walks_back_to_the_first_track():
+    manager, played = build()
+    run(manager.start(1, album()))
+    run(manager.on_state(1, "play"))
+    run(manager.next(1))
+    run(manager.on_state(1, "play"))
+    run(manager.previous(1))
+    assert [url for _, url in played] == ["http://h/t1", "http://h/t2", "http://h/t1"]

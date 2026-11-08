@@ -41,3 +41,39 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run check
+      - run: npm test
+
+  panel:
+    # Real Chrome against the built panel. ubuntu-latest ships Chrome, which is
+    # what the suite drives, so nothing has to be downloaded for it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.9"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            tools/panel/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm ci
+        working-directory: tools/panel
+      - run: npm run build
+        working-directory: frontend
+      # Before the tests, so uv's first download is not charged to a test's timeout.
+      - run: uv sync --frozen
+        working-directory: backend
+      - run: npx playwright test
+        working-directory: tools/panel
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure()
+        with:
+          name: panel-test-results
+          path: tools/panel/shots/test-results

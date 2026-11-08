@@ -59,8 +59,17 @@ def migrated(tmp_path, monkeypatch) -> pathlib.Path:
 class TestTheChainRuns:
     def test_upgrade_head_succeeds_from_nothing(self, migrated):
         """A fresh install. This is the path a new container takes, and until
-        now nothing ran it outside of a real deployment."""
-        assert migrated.exists()
+        now nothing ran it outside of a real deployment.
+
+        Asks what revision the file reached rather than whether it exists -
+        SQLite creates the file the moment anything connects, so existence
+        would pass for a chain that failed on its first statement.
+        """
+        scripts = ScriptDirectory.from_config(alembic_config(migrated))
+        with create_engine(f"sqlite:///{migrated}").connect() as connection:
+            reached = MigrationContext.configure(connection).get_current_revision()
+
+        assert reached == scripts.get_current_head()
 
     def test_it_creates_the_tables_the_app_queries(self, migrated):
         tables = set(inspect(create_engine(f"sqlite:///{migrated}")).get_table_names())

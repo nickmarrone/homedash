@@ -531,3 +531,30 @@ class TestOneSourceFailing:
         sync_module.sync_sources(session, two_sources[:1])
 
         assert "https://x/broken" in caplog.text
+
+
+class TestAnUnchangedSource:
+    def test_it_records_having_checked_without_touching_the_events(
+        self, session, source, monkeypatch
+    ):
+        monkeypatch.setattr(
+            sync_module, "build_adapter", lambda _: FakeAdapter(vevents("a"), changed=True)
+        )
+        sync_module.sync_source(session, source)
+        before = session.exec(select(EventInstance)).all()
+
+        monkeypatch.setattr(
+            sync_module, "needs_full_resync", lambda *_: False
+        )
+        monkeypatch.setattr(
+            sync_module, "build_adapter", lambda _: FakeAdapter([], changed=False)
+        )
+        source.last_synced_at = None
+        session.add(source)
+        session.commit()
+
+        assert sync_module.sync_source(session, source) is False
+
+        session.expire_all()
+        assert session.get(CalendarSource, source.id).last_synced_at is not None
+        assert len(session.exec(select(EventInstance)).all()) == len(before)

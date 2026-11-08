@@ -244,3 +244,29 @@ class TestScreenEndpoint:
         ).model_dump_json()
         assert screen_state(device, instant, TZ)["state"] == "on"
         assert screen_state(device, instant, ZoneInfo("Europe/London"))["state"] == "off"
+
+
+class TestAgentContract:
+    def test_it_is_told_how_often_to_poll(self, device):
+        state = screen_state(device, datetime(2026, 8, 19, 12, tzinfo=timezone.utc), TZ)
+        assert state["poll_after_seconds"] == 30
+
+    def test_an_empty_stored_schedule_falls_back_to_config(self, device, monkeypatch):
+        fallback = ScreenScheduleConfig()
+        monkeypatch.setattr("app.devices.settings", Settings(_env_file=None))
+        device.screen_schedule = ""
+        assert schedule_of(device) == fallback
+
+
+class TestLastSeenBoundary:
+    NOW = datetime(2026, 8, 19, 12, tzinfo=timezone.utc)
+
+    def test_it_is_written_at_exactly_the_throttle(self, session, device):
+        device.last_seen = self.NOW - LAST_SEEN_THROTTLE
+        touch_last_seen(session, device, self.NOW)
+        assert device.last_seen.replace(tzinfo=timezone.utc) == self.NOW
+
+    def test_the_write_reaches_the_database(self, session, device):
+        touch_last_seen(session, device, self.NOW)
+        session.expire_all()
+        assert session.get(Device, device.id).last_seen is not None
