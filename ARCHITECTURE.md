@@ -43,7 +43,7 @@ One image, one process, one SQLite file. The Pi is a thin client that runs a bro
 | `devices.py` | Screen-schedule arithmetic and the device row reconciler |
 | `api/routes/` | Every HTTP endpoint, one router per subject, assembled in `__init__` |
 | `api/deps.py` | `settings` and `SessionDep` — the one config seam every router shares |
-| `api/serializers.py` | `serialize_instance` and `serialize_now_playing` — the wire shapes |
+| `api/serializers.py` | `serialize_instance` and `serialize_now_playing` — the wire shapes (the latter called from `music/playback.py`) |
 | `calendars/` | Calendar adapters and the sync/expansion pipeline |
 | `photos/` | Photo sources, the index, and Pillow resizing for the screensaver |
 | `music/` | The HEOS connection and the speakers the panel controls |
@@ -181,7 +181,23 @@ files, so per-row unlinking would blank the surviving copy.
 | `jellyfin.py` | `JellyfinLibrary`: browse three levels, and fetch the art and audio |
 | `tokens.py` | Short opaque stream tokens, and the 255-character check |
 | `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the three ends that give the speaker back |
-| `service.py` | The process-wide singletons, and the switches that decide they exist |
+| `playback.py` | `Playback`: which source answers for a speaker — the players snapshot with the now-playing override, transport precedence, play, volume — and the failures sorted into its own exceptions |
+| `service.py` | The process-wide singletons, and the switches that decide they exist. Routes get `get_playback()` and `get_tokens()`, nothing else |
+
+**`Playback` is the music routes' only way in.** A speaker can be driven by
+HEOS's own sources or by a HomeDash queue, and every request has to decide
+which one is the authority: skips and stop go to the queue when there is one
+and fall through to the speaker otherwise; `now_playing` comes from the queue's
+track when there is one, with only the position from the speaker. Those rules
+used to be written into each route handler, and a new source would have meant a
+new branch in every one of them. They live in `Playback` now, so Audiobookshelf
+sessions and Apple Music are each a branch in one module. Its failures are
+`Unavailable`, `UnknownPlayer`, `SpeakerRefused`, `LibraryFailed` and
+`NothingToPlay`; the routes map them to 503/404/502/502/404 in one table, and
+let `UrlTooLong` through as a 500. It is tested directly in
+`test_music_playback.py` against `FakeHeos` and a fake library, with no web app;
+`test_music_api.py` is left with statuses and request validation, patching the
+one getter.
 
 `queue.py` is the only module that knows about both halves — `heos.py` and
 `jellyfin.py` never import each other. The same one-way discipline
@@ -292,8 +308,8 @@ sends its successor, the new album sends its first track, and whichever command
 wins the race inside pyheos is what plays. Heard on the wall, that is an album
 starting on the previous album's next song. The lock also restores the ordering
 of the events themselves — `asyncio.Lock` is FIFO, so a `stop` and the `play`
-that followed it can no longer be applied backwards — and it is why the transport
-route calls `QueueManager.stop()` rather than `clear()`: dropping the queue while
+that followed it can no longer be applied backwards — and it is why
+`Playback.transport` calls `QueueManager.stop_and_release()` rather than `clear()`: dropping the queue while
 the next track is still on its way would stop the music and let that command
 start it again. The locks are per speaker so one stalled command cannot hold up
 the album playing in the next room.
@@ -303,7 +319,7 @@ move to and does nothing at all, because the entry `play_url` just appended is
 always the *last* one in the speaker's queue. This was originally read as
 "content sent as a URL never enters the speaker's queue", which is the opposite
 of the truth and cost this feature a bug — see below. The conclusion was right
-either way: the route asks `QueueManager` first and falls through to the speaker
+either way: `Playback.transport` asks `QueueManager` first and falls through to the speaker
 only when there is no HomeDash queue, which is right for a speaker playing from
 one of its own sources.
 
@@ -344,7 +360,7 @@ the only way to see the fault or to clean up after a build that had it.
 bare URL has no metadata for it and falls back to describing the stream, so the
 panel showed a bitrate and a codec where the song title goes, and the speaker's
 own art URL — pointing at nothing — where the cover goes. Whenever there is a
-HomeDash queue, `GET /api/music/players` replaces `now_playing` with the
+HomeDash queue, `Playback.players()` replaces `now_playing` with the
 Jellyfin track it actually sent: title, artist, album, its duration, and a
 cover at `/api/music/art/{album_id}`. Only `position_ms` is still the speaker's,
 because it is the only party that knows it. A speaker playing one of its own
