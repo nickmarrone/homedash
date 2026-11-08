@@ -141,9 +141,8 @@ class TestChanges:
 
     def test_a_deleted_photo_is_dropped_from_the_index(self, session, photos_dir):
         """The failure mode that actually matters: a photo pulled out of the
-        folder must stop appearing on the kitchen wall. In a subfolder, so the
-        root still has something in it - see TestUnavailableFolder."""
-        path = add_photo(photos_dir, "2026/beach.jpg")
+        folder must stop appearing on the kitchen wall."""
+        path = add_photo(photos_dir, "beach.jpg")
         scan(session, photos_dir)
 
         path.unlink()
@@ -154,7 +153,7 @@ class TestChanges:
     def test_a_deleted_photo_takes_its_derivatives_with_it(
         self, session, photos_dir, cache_dir
     ):
-        path = add_photo(photos_dir, "2026/beach.jpg")
+        path = add_photo(photos_dir, "beach.jpg")
         scan(session, photos_dir)
         assert list(cache_dir.glob("*.jpg"))
 
@@ -285,21 +284,8 @@ class TestFolderWalk:
 
 
 class TestUnavailableFolder:
-    """A share that is not mounted shows up as an empty directory, and the
+    """A root that is not there says nothing about the photos in it, and the
     index must not read that as every photo having been deleted."""
-
-    def test_an_empty_root_keeps_the_index_and_the_cache(
-        self, session, photos_dir, cache_dir
-    ):
-        path = add_photo(photos_dir, "beach.jpg")
-        scan(session, photos_dir)
-        rendered = set(cache_dir.glob("*.jpg"))
-
-        path.unlink()
-
-        assert scan(session, photos_dir) is False
-        assert set(rows(session)) == {"beach.jpg"}
-        assert set(cache_dir.glob("*.jpg")) == rendered
 
     def test_a_missing_root_keeps_the_index_and_the_cache(
         self, session, photos_dir, cache_dir
@@ -315,34 +301,20 @@ class TestUnavailableFolder:
         assert set(rows(session)) == {"beach.jpg"}
         assert set(cache_dir.glob("*.jpg")) == rendered
 
-    def test_a_share_that_comes_back_costs_nothing(self, session, photos_dir, tmp_path):
+    def test_a_root_that_comes_back_costs_nothing(self, session, photos_dir, tmp_path):
         """Same size and mtime, so nothing is re-hashed or re-rendered and the
         panel is not told anything changed."""
-        path = add_photo(photos_dir, "beach.jpg")
+        add_photo(photos_dir, "beach.jpg")
         scan(session, photos_dir)
-        away = tmp_path / "away.jpg"
+        away = tmp_path / "away"
 
-        path.rename(away)
+        photos_dir.rename(away)
         scan(session, photos_dir)
-        away.rename(path)
+        away.rename(photos_dir)
 
         assert scan(session, photos_dir) is False
         assert set(rows(session)) == {"beach.jpg"}
 
     def test_a_folder_that_was_never_filled_is_not_an_error(self, session, photos_dir):
         assert scan(session, photos_dir) is False
-        assert rows(session) == {}
-
-    def test_a_hidden_file_is_enough_to_prove_the_share_is_there(
-        self, session, photos_dir
-    ):
-        """Sync tools leave these behind, and they do not exist on an empty
-        mountpoint, so the photos really were removed."""
-        path = add_photo(photos_dir, "beach.jpg")
-        scan(session, photos_dir)
-
-        path.unlink()
-        (photos_dir / ".stfolder").mkdir()
-
-        assert scan(session, photos_dir) is True
         assert rows(session) == {}

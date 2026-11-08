@@ -33,15 +33,10 @@ class FolderPhotoSource:
     def list_photos(self) -> list[SourcePhoto]:
         if not self.root.is_dir():
             raise PhotoSourceUnavailable(f"{self.root} does not exist")
-        # A share that is not mounted is an empty directory inside the
-        # container, and looks exactly like one somebody emptied. Telling the
-        # index it is empty would cost every row and every derivative over a
-        # NAS reboot, so an empty root is treated as unknown instead. The price
-        # is that removing the very last photo waits until something else is in
-        # the folder.
-        if next(self.root.iterdir(), None) is None:
-            raise PhotoSourceUnavailable(f"{self.root} is empty")
 
+        # An empty root is an answer, not a failure, even though an unmounted
+        # share looks the same from in here: a photo somebody pulled out must
+        # stop appearing on the wall, including the last one.
         photos: list[SourcePhoto] = []
         for path in sorted(self.root.rglob("*")):
             if not self._is_candidate(path):
