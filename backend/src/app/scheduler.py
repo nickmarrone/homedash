@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session, select
 
-from app.calendars.sync import sync_source
+from app.calendars.sync import sync_sources
 from app.comets import refresh_comet_elements
 from app.config import get_settings
 from app.db import engine
@@ -43,20 +43,7 @@ def sync_kinds(kinds: tuple[str, ...]) -> None:
                 CalendarSource.enabled == True,  # noqa: E712
             )
         ).all()
-        changed = False
-        for source in sources:
-            try:
-                if sync_source(session, source):
-                    changed = True
-            except Exception:
-                # Roll back before moving on: sync_source deletes a source's
-                # rows before rebuilding them, so a failure part-way through
-                # leaves those deletes pending in the session. Without this,
-                # the *next* source's successful commit would flush them and
-                # silently empty the calendar that failed.
-                session.rollback()
-                logger.exception("Sync failed for source %s (%s)", source.id, source.url)
-        if changed:
+        if sync_sources(session, sources):
             broadcaster.publish("events.updated")
 
 

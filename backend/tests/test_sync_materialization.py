@@ -449,3 +449,85 @@ class TestGoogleEndToEnd:
         assert sync_module.sync_source(session, source) is True
         assert titles(session) == ["dentist"]
         assert [e.uid for e in session.exec(select(Event)).all()] == ["dentist"]
+
+
+class TestOneSourceFailing:
+    """`sync_source` deletes a calendar's rows before rebuilding them, and every
+    source in a pass shares one session. A failure part-way through leaves those
+    deletes pending, so the next source's commit is what would empty the calendar
+    that failed."""
+
+    @pytest.fixture
+    def two_sources(self, session):
+        rows = [
+            CalendarSource(
+                kind="google", name=name, url=f"https://x/{name}", calendar_id=name, enabled=True
+            )
+            for name in ("broken", "healthy")
+        ]
+        session.add_all(rows)
+        session.commit()
+        for row in rows:
+            session.refresh(row)
+        return rows
+
+    @pytest.fixture
+    def serve_each(self, monkeypatch):
+        """Serve each source its own calendar, by name."""
+
+        def _serve(**items_by_name) -> None:
+            adapters = {name: FakeAdapter(i, True) for name, i in items_by_name.items()}
+            monkeypatch.setattr(sync_module, "build_adapter", lambda s: adapters[s.name])
+
+        return _serve
+
+    @pytest.fixture
+    def fails_after_deleting(self, monkeypatch):
+        """Blow up on one occurrence: after the rows are deleted, before the commit."""
+        real = sync_module._occurrence_bounds
+
+        def bounds(occurrence):
+            if str(occurrence.get("UID")).startswith("malformed"):
+                raise ValueError("an event nothing could have predicted")
+            return real(occurrence)
+
+        monkeypatch.setattr(sync_module, "_occurrence_bounds", bounds)
+
+    def test_a_failed_calendar_keeps_its_events(
+        self, session, two_sources, serve_each, fails_after_deleting
+    ):
+        """The headline: one malformed event must not wipe somebody's
+        appointments off the wall when the next calendar saves."""
+        serve_each(broken=vevents("dentist"), healthy=vevents("soccer"))
+        sync_module.sync_sources(session, two_sources)
+        assert titles(session) == ["dentist", "soccer"]
+
+        serve_each(broken=vevents("malformed"), healthy=vevents("soccer", "piano"))
+        sync_module.sync_sources(session, two_sources)
+
+        assert titles(session) == ["dentist", "piano", "soccer"]
+
+    def test_the_calendars_after_it_still_sync(
+        self, session, two_sources, serve_each, fails_after_deleting
+    ):
+        serve_each(broken=vevents("malformed"), healthy=vevents("soccer"))
+
+        assert sync_module.sync_sources(session, two_sources) is True
+        assert titles(session) == ["soccer"]
+
+    def test_nothing_is_reported_changed_when_nothing_was_saved(
+        self, session, two_sources, serve_each, fails_after_deleting
+    ):
+        """The panel reloads on this answer, and there is nothing new to show."""
+        serve_each(broken=vevents("malformed"))
+
+        assert sync_module.sync_sources(session, two_sources[:1]) is False
+
+    def test_the_failure_is_logged_with_the_source(
+        self, session, two_sources, serve_each, fails_after_deleting, caplog
+    ):
+        serve_each(broken=vevents("malformed"))
+
+        sync_module.sync_sources(session, two_sources[:1])
+
+        assert "https://x/broken" in caplog.text

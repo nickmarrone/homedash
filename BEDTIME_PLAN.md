@@ -185,8 +185,12 @@ needs no timer anywhere: the state is *computed* from `unlocked_until` at read t
 - Masthead: a small lock glyph (inline SVG, `--ink-muted`) next to the date while locked.
 - Controls row (`+page.svelte:330`): a `control-round` lock button after the view
   switcher, rendered only when `lock.enabled`. Part 2 adds the gear beside it.
-- Heartbeat handler: `lock.applyHeartbeat(heartbeat.locked)`; SSE `lock.updated` →
-  `guard(lock.load())`; add `'lock.updated'` to the listener list in `api.ts`.
+- Heartbeat handler: `lock.applyHeartbeat(heartbeat.locked)`.
+- SSE: `subscribeToUpdates` takes an `{ eventName: reload }` map in place of `onEvent` and
+  builds its `addEventListener` calls from the map's keys; the page's if-chain becomes that
+  map. A named event with no listener never fires and nothing reports it, and this part is
+  already editing both places, so it is the cheap moment to make them one list. Add
+  `'lock.updated': () => guard(lock.load())`.
 - Z-order stays coherent: calendar < music slot (20) < music overlay (40) <
   **PanelLock (60)** < Screensaver (100) < PanelBlank (200). The lock covers an open music
   overlay (visible, inert); Part 2's settings overlay sits at 40 as well. The screensaver
@@ -252,11 +256,21 @@ def set_pin(session, new_pin: str)                # 4 to 8 digits, validated; wr
 The PIN is a household PIN; hashing adds nothing against a keypad, so it is stored plain
 and the docstring says so.
 
+`preferences.py` is the only reader of these seven fields as well as the only writer.
 Consumers switch from `deps.settings.x` to `preferences.load(session).x`: the calendar
-router for `week_starts_on`, the photos router for idle/dwell, `lock.py` for the schedule
-and unlock minutes, and `weather/client.py` for the unit (a unit change kicks
-`refresh_weather()` in the executor and publishes `weather.updated`). The screen schedule keeps living on the `devices` row; `preferences.save`
-writes it there and the heartbeat already reads it from there.
+router for `week_starts_on`, the photos router for idle/dwell, and `lock.py` for the
+schedule and unlock minutes. Deployment settings (hosts, keys, poll intervals, the
+timezone) are not preferences and stay on `Settings`, so `scheduler.py` and
+`music/service.py` do not change. Two consumers need more than the swap:
+
+- **Weather is passed its unit.** `refresh_weather(unit)` takes it as an argument and its
+  callers load it, so the client stays free of the database. A unit change kicks
+  `refresh_weather` in the executor and publishes `weather.updated`.
+- **The screen schedule has one reader.** It keeps living on the `devices` row, and
+  `preferences.save` writes it there. `preferences.screen_schedule(device)` replaces
+  `devices.schedule_of`, taking its env fallback with it, and both `load` and
+  `screen_state` call it. With two readers each holding a fallback, the settings page and
+  the heartbeat could disagree about bedtime.
 
 **`app/api/routes/settings.py`**:
 
@@ -299,7 +313,7 @@ unlock minutes also publishes `lock.updated`.
 - Save is per section (a filled pill), with a one-line "Saved" confirmation; failures show
   the server's `detail`.
 - `lib/settings.svelte.ts` factory with `load()`, `save(sectionPatch)`, `reset(keys)`,
-  `changePin`. Add `'settings.updated'` to the SSE listener list in `api.ts:398`.
+  `changePin`. Add `'settings.updated'` to the page's SSE handler map (Part 1).
 
 ### Tests
 
