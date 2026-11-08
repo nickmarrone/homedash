@@ -131,7 +131,11 @@
 		// first render already knows which of them are over. Waiting for the
 		// heartbeat leaves a freshly loaded panel showing a whole morning of
 		// finished appointments at full strength until one arrives.
-		serverToday = grid.today;
+		//
+		// Only the first time for the date: after that it is the heartbeat's to
+		// change, because moving it here makes the heartbeat see no change and
+		// skip the rollover, which is what returns the panel to today.
+		serverToday ??= grid.today;
 		serverNow = grid.now;
 	}
 

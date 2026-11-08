@@ -109,6 +109,28 @@ test.describe('midnight', () => {
     await expect(panel.periodTitle).toHaveText(`day of ${tomorrow}`);
   });
 
+  test('a sync that lands just after midnight does not swallow the rollover', async ({
+    page,
+    api,
+    panel,
+  }) => {
+    await panel.open();
+    await panel.select('Day');
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await expect(panel.periodTitle).toHaveText(`day of ${addDays(TODAY, -1)}`);
+
+    // The grid response carries the new date, and arrives before the heartbeat.
+    api.today = tomorrow;
+    api.now = `${tomorrow}T00:00:05`;
+    const before = api.count('GET /api/calendar?');
+    await panel.emit('events.updated');
+    await expect.poll(() => api.count('GET /api/calendar?')).toBeGreaterThan(before);
+    await page.waitForTimeout(100);
+
+    await panel.heartbeat();
+    await expect(panel.periodTitle).toHaveText(`day of ${tomorrow}`);
+  });
+
   test('an unchanged date does not refetch anything', async ({ api, panel }) => {
     await panel.open();
     const before = api.requests.length;
