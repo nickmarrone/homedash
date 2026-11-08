@@ -78,7 +78,8 @@ file's `music/` section first.
   state, `homedash:`-prefixed localStorage with try/catch, inline SVG only (no emoji, no
   icon fonts), 48px tap targets, every colour from `theme.css` tokens. New screens are
   **states inside the SPA**, never routes (the kiosk allowlist is one URL).
-- Every new fetch on `+page.svelte` goes through `reloadEverything` or `guard`.
+- Everything new on `+page.svelte` that the server can change is declared as a live domain
+  in `createLiveDomains`; a one-off fetch goes through `live.guard`.
 - Update `ARCHITECTURE.md` in the same commit as each structural change, and add a
   "Landed after v1" entry to `CLAUDE.md` per part.
 
@@ -186,11 +187,8 @@ needs no timer anywhere: the state is *computed* from `unlocked_until` at read t
 - Controls row (`+page.svelte:330`): a `control-round` lock button after the view
   switcher, rendered only when `lock.enabled`. Part 2 adds the gear beside it.
 - Heartbeat handler: `lock.applyHeartbeat(heartbeat.locked)`.
-- SSE: `subscribeToUpdates` takes an `{ eventName: reload }` map in place of `onEvent` and
-  builds its `addEventListener` calls from the map's keys; the page's if-chain becomes that
-  map. A named event with no listener never fires and nothing reports it, and this part is
-  already editing both places, so it is the cheap moment to make them one list. Add
-  `'lock.updated': () => guard(lock.load())`.
+- SSE: add `{ load: lock.load, events: ['lock.updated'] }` to the page's `createLiveDomains`
+  list. That one line is the first load, the retry, the reconnect reload and the listener.
 - Z-order stays coherent: calendar < music slot (20) < music overlay (40) <
   **PanelLock (60)** < Screensaver (100) < PanelBlank (200). The lock covers an open music
   overlay (visible, inert); Part 2's settings overlay sits at 40 as well. The screensaver
@@ -313,7 +311,8 @@ unlock minutes also publishes `lock.updated`.
 - Save is per section (a filled pill), with a one-line "Saved" confirmation; failures show
   the server's `detail`.
 - `lib/settings.svelte.ts` factory with `load()`, `save(sectionPatch)`, `reset(keys)`,
-  `changePin`. Add `'settings.updated'` to the page's SSE handler map (Part 1).
+  `changePin`. Add it to the page's `createLiveDomains` list with
+  `events: ['settings.updated']`.
 
 ### Tests
 

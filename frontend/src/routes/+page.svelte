@@ -6,7 +6,6 @@
 		fetchCalendars,
 		fetchPhotos,
 		fetchWeather,
-		subscribeToUpdates,
 		type AgendaCalendar,
 		type AgendaItem,
 		type CalendarView,
@@ -18,8 +17,7 @@
 	import { createOrientation } from '$lib/orientation.svelte';
 	import { createMusic } from '$lib/music.svelte';
 	import { startIdleTimer, swallowNextClick, type IdleTimer } from '$lib/idle';
-	import { startWatchdog } from '$lib/watchdog';
-	import { startBackoff } from '$lib/retry';
+	import { createLiveDomains } from '$lib/liveDomains';
 	import { isVisible, loadHidden, pruneHidden, saveHidden } from '$lib/calendarVisibility';
 	import { loadView, saveView } from '$lib/viewPreference';
 	import { formatMasthead } from '$lib/format';
@@ -72,8 +70,8 @@
 	// playlist changes too - which photos are the awkward ones inverts with the
 	// panel, so the slots come back different.
 	const orientation = createOrientation(() => {
-		loadEvents();
-		loadPhotos();
+		live.guard(loadEvents());
+		live.guard(loadPhotos());
 	});
 	let isPortrait = $derived(orientation.isPortrait);
 
@@ -112,12 +110,12 @@
 		view = next;
 		anchor = null;
 		saveView(next);
-		guard(next === 'agenda' ? loadAgenda() : loadGrid());
+		live.guard(next === 'agenda' ? loadAgenda() : loadGrid());
 	}
 
 	function goTo(next: string | null) {
 		anchor = next;
-		guard(loadGrid());
+		live.guard(loadGrid());
 	}
 
 	async function loadAgenda() {
@@ -209,37 +207,21 @@
 		return Promise.all([loadGrid(), orientation.isPortrait ? loadAgenda() : null]);
 	}
 
-	// Every fetch in this file goes through here or through `guard` below.
-	// A loader that rejects with nobody watching is not just a lost update: on
-	// a cold start it is the whole panel, permanently, because the SSE
-	// watchdog only fires on a *quiet* stream and a backend that has since
-	// come up keeps the stream perfectly healthy. See lib/retry.ts.
-	async function reloadEverything(): Promise<void> {
-		const results = await Promise.allSettled([
-			loadEvents(),
-			loadCalendars(),
-			loadWeather(),
-			loadPhotos(),
-			music.load()
-		]);
-		const failed = results.filter((r) => r.status === 'rejected');
-		if (failed.length === 0) {
-			backoff.succeed();
-			return;
-		}
-		console.warn(`HomeDash: ${failed.length} of ${results.length} loads failed; retrying`);
-		backoff.fail();
-	}
-
-	/** For the one-off loads a tap triggers. A single failure arms the same
-	 * retry as a failed round, which reloads everything - blunter than
-	 * reissuing just this fetch, and correct for the reason that made it fail. */
-	function guard(load: Promise<unknown>): void {
-		load.catch(() => backoff.fail());
-	}
-
-	const backoff = startBackoff(() => {
-		reloadEverything();
+	// Everything on this page the server can change, declared once. Every fetch
+	// in this file is one of these or goes through `live.guard`: a load that
+	// rejects with nobody watching can leave the panel blank for good - see
+	// lib/liveDomains.ts.
+	const live = createLiveDomains({
+		domains: [
+			{ load: loadEvents, events: ['events.updated'] },
+			// Follows the events too: a config change adds or removes a source,
+			// and the legend must follow without a page reload.
+			{ load: loadCalendars, events: ['events.updated'] },
+			{ load: loadWeather, events: ['weather.updated'] },
+			{ load: loadPhotos, events: ['photos.updated'] },
+			{ load: music.load, events: ['music.updated'] }
+		],
+		onHeartbeat
 	});
 
 	function onHeartbeat(heartbeat: Heartbeat) {
@@ -275,49 +257,18 @@
 		// at the wall at midnight, and the panel should be showing now.
 		if (rolledOver) {
 			anchor = null;
-			reloadEverything();
+			live.reloadAll();
 		}
 	}
 
 	onMount(() => {
 		hiddenCalendars = loadHidden();
 		view = loadView();
-		reloadEverything();
-
-		const watchdog = startWatchdog();
-
-		const unsubscribe = subscribeToUpdates({
-			onMessage: () => watchdog.notify(),
-			onHeartbeat,
-			// The stream dropped and came back, so anything could have changed
-			// while it was gone.
-			onReconnect: reloadEverything,
-			onError: (fatal) => {
-				// A dropped stream reopens by itself, and the watchdog covers
-				// it going quiet. A *closed* one never reopens, so the page has
-				// to be replaced - and the watchdog's own reload throttle is
-				// what stops this becoming a loop against a backend that is
-				// simply down.
-				if (fatal) watchdog.reloadNow();
-			},
-			onEvent: (eventType) => {
-				// Calendars are reloaded too: a config change adds or removes a
-				// source, and the legend must follow without a page reload.
-				if (eventType === 'events.updated') {
-					guard(loadEvents());
-					guard(loadCalendars());
-				}
-				if (eventType === 'weather.updated') guard(loadWeather());
-				if (eventType === 'photos.updated') guard(loadPhotos());
-				if (eventType === 'music.updated') guard(music.load());
-			}
-		});
+		live.start();
 
 		return () => {
-			watchdog.stop();
-			backoff.stop();
+			live.stop();
 			idleTimer?.stop();
-			unsubscribe();
 		};
 	});
 </script>
