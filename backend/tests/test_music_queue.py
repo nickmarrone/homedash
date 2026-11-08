@@ -13,6 +13,7 @@ import pytest
 
 from app.music.base import Track
 from app.music.queue import QueueManager
+from music_fakes import RecordingSpeaker
 
 
 def album(count=3, prefix="t"):
@@ -31,25 +32,15 @@ def album(count=3, prefix="t"):
 
 def build(url_for=None):
     """A queue manager that records the URLs it sent, per player."""
-    played: list[tuple[int, str]] = []
-
-    async def play_url(player_id, url):
-        played.append((player_id, url))
-
-    manager = QueueManager(play_url=play_url, url_for=url_for or (lambda t: f"http://h/{t.id}"))
-    return manager, played
+    speaker = RecordingSpeaker()
+    manager = QueueManager(speaker=speaker, url_for=url_for or (lambda t: f"http://h/{t.id}"))
+    return manager, speaker.played
 
 
 def build_with_stops(url_for=None):
     """As `build`, and also records which speakers were told to stop."""
     manager, played = build(url_for)
-    stopped: list[int] = []
-
-    async def stop_player(player_id):
-        stopped.append(player_id)
-
-    manager.stop_player = stop_player
-    return manager, played, stopped
+    return manager, played, manager.speaker.stopped
 
 
 def run(coro):
@@ -233,17 +224,26 @@ def gated():
     what matters is the order the commands reach the speaker rather than the
     order they were issued in.
     """
-    played: list[tuple[int, str]] = []
     holds: dict[str, asyncio.Event] = {}
 
-    async def play_url(player_id, url):
-        hold = holds.pop(url, None)
-        if hold is not None:
-            await hold.wait()
-        played.append((player_id, url))
+    class Held:
+        async def play_url(self, player_id, url):
+            hold = holds.pop(url, None)
+            if hold is not None:
+                await hold.wait()
 
-    manager = QueueManager(play_url=play_url, url_for=lambda t: f"http://h/{t.id}")
-    return manager, played, holds
+        async def stop(self, player_id):
+            pass
+
+        async def clear_queue(self, player_id):
+            pass
+
+        async def prune_queue(self, player_id):
+            pass
+
+    speaker = RecordingSpeaker(inner=Held())
+    manager = QueueManager(speaker=speaker, url_for=lambda t: f"http://h/{t.id}")
+    return manager, speaker.played, holds
 
 
 def test_a_new_album_is_not_overtaken_by_the_track_the_old_one_was_starting():
@@ -442,34 +442,9 @@ class TestGivingTheSpeakerBack:
     """
 
     def build_speaker(self):
-        """A manager wired to a recorder that keeps every call in order.
-
-        One list rather than a list per verb, because most of what is worth
-        asserting here is ordering - a queue cleared before the stop it was
-        meant to follow is a different bug from one that is never cleared.
-        """
-        events: list[tuple] = []
-
-        async def play_url(player_id, url):
-            events.append(("play_url", url))
-
-        async def stop_player(player_id):
-            events.append(("stop_speaker",))
-
-        async def clear_speaker_queue(player_id):
-            events.append(("clear_speaker_queue",))
-
-        async def prune_speaker_queue(player_id):
-            events.append(("prune_speaker_queue",))
-
-        manager = QueueManager(
-            play_url=play_url,
-            url_for=lambda t: f"http://h/{t.id}",
-            stop_player=stop_player,
-            clear_speaker_queue=clear_speaker_queue,
-            prune_speaker_queue=prune_speaker_queue,
-        )
-        return manager, events
+        """A manager whose speaker keeps every call in order - see RecordingSpeaker."""
+        manager, _ = build()
+        return manager, manager.speaker.events
 
     def test_an_album_that_finishes_empties_the_speakers_queue(self):
         """The reported bug, in one test. The speaker has stopped itself, so
@@ -481,7 +456,7 @@ class TestGivingTheSpeakerBack:
 
         run(manager.on_state(1, "stop"))
 
-        assert ("clear_speaker_queue",) in events
+        assert ("clear_queue",) in events
         assert 1 not in manager.queues
 
     def test_a_finished_album_is_not_also_sent_a_stop(self):
@@ -493,7 +468,7 @@ class TestGivingTheSpeakerBack:
 
         run(manager.on_state(1, "stop"))
 
-        assert ("stop_speaker",) not in events
+        assert ("stop",) not in events
 
     def test_skipping_off_the_end_stops_the_speaker_and_then_empties_its_queue(self):
         """Both, and in that order: here the last track is still playing, so
@@ -503,7 +478,7 @@ class TestGivingTheSpeakerBack:
 
         run(manager.next(1))
 
-        assert events[-2:] == [("stop_speaker",), ("clear_speaker_queue",)]
+        assert events[-2:] == [("stop",), ("clear_queue",)]
 
     def test_the_panels_stop_button_empties_the_speakers_queue_too(self):
         """The case the question was actually about: after stopping the music
@@ -514,7 +489,7 @@ class TestGivingTheSpeakerBack:
 
         assert run(manager.stop_and_release(1)) is True
 
-        assert events[-2:] == [("stop_speaker",), ("clear_speaker_queue",)]
+        assert events[-2:] == [("stop",), ("clear_queue",)]
         assert 1 not in manager.queues
 
     def test_stopping_forgets_the_queue_before_telling_the_speaker(self):
@@ -532,7 +507,7 @@ class TestGivingTheSpeakerBack:
         run(manager.stop_and_release(1))
         run(manager.on_state(1, "stop"))
 
-        assert events == [("stop_speaker",), ("clear_speaker_queue",)]
+        assert events == [("stop",), ("clear_queue",)]
 
     def test_stopping_a_speaker_with_no_queue_here_is_not_handled(self):
         """It falls the route through to HEOS's own stop, which is right for a
@@ -551,11 +526,11 @@ class TestGivingTheSpeakerBack:
         """
         manager, events = self.build_speaker()
         run(manager.start(1, album(3)))
-        assert ("prune_speaker_queue",) not in events
+        assert ("prune_queue",) not in events
 
         run(manager.on_state(1, "play"))
 
-        assert events == [("play_url", "http://h/t1"), ("prune_speaker_queue",)]
+        assert events == [("play_url", "http://h/t1"), ("prune_queue",)]
 
     def test_nothing_is_pruned_before_the_speaker_says_it_is_playing(self):
         """A `pause` or a `stop` says nothing about which entry it is on."""
@@ -565,7 +540,7 @@ class TestGivingTheSpeakerBack:
         run(manager.on_state(1, "pause"))
         run(manager.on_state(1, "stop"))
 
-        assert ("prune_speaker_queue",) not in events
+        assert ("prune_queue",) not in events
 
     def test_a_prune_that_fails_does_not_stall_the_album(self):
         """`awaiting_start` is cleared first, on purpose.
@@ -580,7 +555,7 @@ class TestGivingTheSpeakerBack:
             raise RuntimeError("get_queue not supported")
 
         manager, events = self.build_speaker()
-        manager.prune_speaker_queue = explode
+        manager.speaker.prune_queue = explode
         run(manager.start(1, album(3)))
 
         with pytest.raises(RuntimeError):
@@ -591,14 +566,3 @@ class TestGivingTheSpeakerBack:
             "http://h/t1",
             "http://h/t2",
         ]
-
-    def test_a_manager_with_no_speaker_callables_still_works(self):
-        """The transport-only wiring, and every test above this class. Tidying
-        the speaker's queue is something HomeDash gained, not something the
-        queue's own logic depends on."""
-        manager, played = build()
-        run(manager.start(1, album(1)))
-        run(manager.on_state(1, "play"))
-        run(manager.on_state(1, "stop"))
-        assert 1 not in manager.queues
-        assert run(manager.stop_and_release(1)) is False

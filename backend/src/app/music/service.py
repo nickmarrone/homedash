@@ -13,7 +13,7 @@ weather cache. A restart therefore stops the music after the current track.
 import logging
 
 from app.config import get_settings
-from app.music.heos import HeosController
+from app.music.heos import HeosController, HeosSpeaker
 from app.music.jellyfin import JellyfinLibrary
 from app.music.playback import Playback
 from app.music.queue import QueueManager
@@ -77,18 +77,18 @@ def start_music() -> None:
             logger.debug("No music configured; the music routes will answer 503.")
         return
 
+    # The controller first: the queue drives the speakers through it, and it
+    # reaches the queue only by way of `_on_player_state`, which looks the
+    # queue up when an event arrives - so neither has to exist before the other.
+    _controller = HeosController(
+        settings.heos_host, on_change=_publish_change, on_state=_on_player_state
+    )
     if library_configured():
         _library = JellyfinLibrary(
             settings.jellyfin_url, settings.jellyfin_api_key, settings.jellyfin_music_library_id
         )
         _tokens = TokenStore()
-        _queues = QueueManager(
-            play_url=_play_url,
-            url_for=_url_for,
-            stop_player=_stop_player,
-            clear_speaker_queue=_clear_speaker_queue,
-            prune_speaker_queue=_prune_speaker_queue,
-        )
+        _queues = QueueManager(speaker=HeosSpeaker(_controller), url_for=_url_for)
         if not settings.public_base_url:
             logger.warning(
                 "HOMEDASH_JELLYFIN_URL is set but HOMEDASH_PUBLIC_BASE_URL is empty. "
@@ -97,9 +97,6 @@ def start_music() -> None:
                 "not one. Playback will fail until this is set."
             )
 
-    _controller = HeosController(
-        settings.heos_host, on_change=_publish_change, on_state=_on_player_state
-    )
     _playback = Playback(_controller, _library, _queues)
     # Logged before the connection is attempted, not after it succeeds: the
     # connect runs in a background task that may take a retry cycle or never
@@ -147,42 +144,6 @@ def _url_for(track) -> str:
     """
     assert _tokens is not None
     return stream_url(settings.public_base_url, _tokens.mint(track.id))
-
-
-async def _play_url(player_id: int, url: str) -> None:
-    assert _controller is not None
-    await _controller.play_url(player_id, url)
-
-
-async def _stop_player(player_id: int) -> None:
-    """Ends an album that was skipped past or stopped - see queue._end."""
-    assert _controller is not None
-    await _controller.transport(player_id, "stop")
-
-
-# Tidying the speaker's own queue is best-effort, and that is a decision rather
-# than laziness. HEOS answers an error for `clear_queue` on an empty queue, and
-# older firmware need not implement `get_queue` at all - neither of which is a
-# reason to fail a stop the user asked for, or to abort the track change that
-# was the actual job. It is logged at debug because on the two speakers here it
-# is expected to be quiet, and a warning per album would train people to ignore
-# the log.
-
-
-async def _clear_speaker_queue(player_id: int) -> None:
-    assert _controller is not None
-    try:
-        await _controller.clear_queue(player_id)
-    except Exception:
-        logger.debug("Could not clear player %d's queue", player_id, exc_info=True)
-
-
-async def _prune_speaker_queue(player_id: int) -> None:
-    assert _controller is not None
-    try:
-        await _controller.prune_queue(player_id)
-    except Exception:
-        logger.debug("Could not prune player %d's queue", player_id, exc_info=True)
 
 
 async def _on_player_state(player_id: int, state: str) -> None:

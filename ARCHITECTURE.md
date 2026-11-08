@@ -177,10 +177,10 @@ files, so per-row unlinking would blank the surviving copy.
 | Module | Responsibility |
 |---|---|
 | `base.py` | `MusicLibrary` protocol and the `Artist`/`Album`/`Track` shapes |
-| `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs |
+| `heos.py` | `HeosController`: the connection, the player snapshot, five transport verbs. `HeosSpeaker`: the queue's adapter over it, where tidying the speaker's queue is best-effort |
 | `jellyfin.py` | `JellyfinLibrary`: browse three levels, and fetch the art and audio |
 | `tokens.py` | Short opaque stream tokens, and the 255-character check |
-| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the three ends that give the speaker back |
+| `queue.py` | `QueueManager`: the per-speaker track list HEOS cannot hold, and the three ends that give the speaker back. `Speaker`: the port it drives the speakers through — `play_url`, `stop`, `clear_queue`, `prune_queue` |
 | `playback.py` | `Playback`: which source answers for a speaker — the players snapshot with the now-playing override, transport precedence, play, volume — and the failures sorted into its own exceptions |
 | `service.py` | The process-wide singletons, and the switches that decide they exist. Routes get `get_playback()` and `get_tokens()`, nothing else |
 
@@ -345,7 +345,7 @@ out from under them. Two mechanisms, and they are different on purpose:
   raises Player State Changed as well as Player Queue Changed, so it can stop
   the music.
 
-Both are best-effort at the `music/service.py` seam. HEOS answers an error for
+Both are best-effort in `heos.HeosSpeaker`, the adapter at the queue's `Speaker` seam. HEOS answers an error for
 `clear_queue` on an empty queue and older firmware need not implement
 `get_queue` at all, neither of which is a reason to fail a stop somebody asked
 for. `awaiting_start` is cleared *before* the prune for the same reason: a

@@ -35,8 +35,9 @@ in the order they were not issued in.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from app.music.base import Track
 
@@ -64,29 +65,44 @@ class PlayerQueue:
         return max(0, len(self.tracks) - self.index - 1)
 
 
+class Speaker(Protocol):
+    """What the queue needs from the speakers, and nothing more.
+
+    Two adapters: `heos.HeosSpeaker` in production, and a recorder in the
+    tests. How politely a speaker is tidied - whether a failed `clear_queue`
+    matters - is the adapter's decision, not the queue's: HEOS errors on
+    clearing an empty queue, and that is a fact about HEOS.
+    """
+
+    async def play_url(self, player_id: int, url: str) -> None:
+        """Play one stream. **Appends to the speaker's own queue** - see above."""
+
+    async def stop(self, player_id: int) -> None:
+        """Ends an album that was skipped past or stopped. See `_end`."""
+
+    async def clear_queue(self, player_id: int) -> None:
+        """Empty the speaker's own queue, which is a different thing from this
+        one and the reason a finished album used to leave it unusable."""
+
+    async def prune_queue(self, player_id: int) -> None:
+        """Drop every entry in the speaker's own queue but the one playing."""
+
+
 @dataclass
 class QueueManager:
     """One queue per speaker, and the rules for moving it along.
 
-    Deliberately knows nothing about HEOS or Jellyfin: it is handed callables
-    that drive a speaker and turn a track into a URL. That is what keeps this -
+    Deliberately knows nothing about HEOS or Jellyfin: it is handed a
+    `Speaker` and a way to turn a track into a URL. That is what keeps this -
     the part with the actual logic in it - testable without either.
 
-    Typed rather than left as `object`. They were called anyway, so the
-    annotation was doing nothing but obliging a reader to go and find
-    `music/service.py` to learn the signatures.
+    The speaker is required. It used to arrive as four callables, three of
+    them optional, so a queue that could play but not stop or tidy was a legal
+    thing to build - and only the tests ever built one.
     """
 
-    play_url: Callable[[int, str], Awaitable[None]]
+    speaker: Speaker
     url_for: Callable[[Track], str]
-    # Used to end an album, both when it is skipped past and when the panel
-    # asks for silence. See `next` and `stop_and_release`.
-    stop_player: Callable[[int], Awaitable[None]] | None = None
-    # The speaker's *own* queue, which is a different thing from this one and
-    # the reason a finished album used to leave the speaker unusable. See
-    # `_end` and the `play` branch of `on_state`.
-    clear_speaker_queue: Callable[[int], Awaitable[None]] | None = None
-    prune_speaker_queue: Callable[[int], Awaitable[None]] | None = None
     queues: dict[int, PlayerQueue] = field(default_factory=dict)
     # One lock per speaker, created on demand. Two speakers must never wait on
     # each other: a stalled command to one would otherwise hold up the album
@@ -190,7 +206,7 @@ class QueueManager:
             if self.queues.get(player_id) is None:
                 return False
             await self._end(player_id, stop_speaker=True)
-            return self.stop_player is not None
+            return True
 
     async def _end(self, player_id: int, *, stop_speaker: bool) -> None:
         """End a queue and give the speaker back. Called with the lock held.
@@ -209,10 +225,9 @@ class QueueManager:
         the speaker behaves as though it has a mind of its own.
         """
         self.clear(player_id)
-        if stop_speaker and self.stop_player is not None:
-            await self.stop_player(player_id)
-        if self.clear_speaker_queue is not None:
-            await self.clear_speaker_queue(player_id)
+        if stop_speaker:
+            await self.speaker.stop(player_id)
+        await self.speaker.clear_queue(player_id)
 
     async def next(self, player_id: int) -> bool:
         """Skip forward. Returns False when this speaker has no HomeDash queue.
@@ -294,8 +309,7 @@ class QueueManager:
                 # After `awaiting_start`, never before: a prune that fails must
                 # not leave the queue unable to tell a finished track from the
                 # gap before one, which would stall the album for good.
-                if self.prune_speaker_queue is not None:
-                    await self.prune_speaker_queue(player_id)
+                await self.speaker.prune_queue(player_id)
                 return
             # Only `play` counts as having started. A `pause` or an `unknown`
             # arriving before the stream opens says nothing about whether the
@@ -330,4 +344,4 @@ class QueueManager:
             self.clear(player_id)
             return
         queue.awaiting_start = True
-        await self.play_url(player_id, url)
+        await self.speaker.play_url(player_id, url)

@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from app.music.heos import HeosController, MusicUnavailable
+from app.music.heos import HeosController, HeosSpeaker, MusicUnavailable
 from fake_heos import FakeHeos, FakePlayer
 
 
@@ -222,9 +222,58 @@ class TestTheSpeakersOwnQueue:
 
     def test_clearing_an_empty_queue_raises_and_is_left_to_the_caller(self):
         """HEOS answers an error rather than a no-op, so somebody has to
-        swallow it. `music/service.py` does, because "the queue was already
+        swallow it. `HeosSpeaker` does, because "the queue was already
         empty" must never fail a stop the user asked for - but the controller
         stays a thin mapping onto the protocol and reports what happened."""
         controller, _ = build()
         with pytest.raises(RuntimeError):
             asyncio.run(controller.clear_queue(1))
+
+
+class TestHeosSpeaker:
+    """The queue's adapter, and the one place tidying is allowed to fail.
+
+    This policy used to live in two private functions in `music/service.py`
+    that no test reached - only a hand-written copy of them in the test
+    helpers did, and the copy had already drifted (it let a failed prune
+    through).
+    """
+
+    def test_clearing_an_already_empty_queue_is_not_an_error(self):
+        controller, heos = build()
+        asyncio.run(HeosSpeaker(controller).clear_queue(1))
+        assert heos.players[1].calls == [("clear_queue",)]
+
+    def test_a_speaker_that_cannot_list_its_queue_is_not_an_error(self, monkeypatch):
+        """Older firmware need not implement `get_queue` at all."""
+        controller, heos = build()
+        asyncio.run(controller.play_url(1, "http://homedash/api/music/s/a"))
+
+        async def unsupported(*args, **kwargs):
+            raise RuntimeError("command not supported")
+
+        monkeypatch.setattr(heos.players[1], "get_queue", unsupported)
+
+        asyncio.run(HeosSpeaker(controller).prune_queue(1))
+
+    def test_playing_and_stopping_are_not_best_effort(self):
+        """Only the tidying is forgiven. A play or a stop that fails must
+        reach whoever asked for it, or the button reports a success the
+        speaker never heard."""
+        controller, _ = build()
+        speaker = HeosSpeaker(controller)
+        with pytest.raises(KeyError):
+            asyncio.run(speaker.play_url(99, "http://homedash/api/music/s/a"))
+        with pytest.raises(KeyError):
+            asyncio.run(speaker.stop(99))
+
+    def test_stop_and_play_reach_the_speaker(self):
+        controller, heos = build()
+        speaker = HeosSpeaker(controller)
+        asyncio.run(speaker.play_url(1, "http://homedash/api/music/s/a"))
+        asyncio.run(speaker.stop(1))
+        assert heos.players[1].calls == [
+            ("play_url", "http://homedash/api/music/s/a"),
+            ("stop",),
+        ]
+

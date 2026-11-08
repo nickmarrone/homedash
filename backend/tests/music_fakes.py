@@ -3,7 +3,7 @@
 import asyncio
 
 from app.music.base import Album, Artist, Track
-from app.music.heos import HeosController
+from app.music.heos import HeosController, HeosSpeaker
 from app.music.queue import QueueManager
 from fake_heos import FakeHeos
 
@@ -78,40 +78,55 @@ class FakeLibrary:
         return list(self._tracks)
 
 
+class RecordingSpeaker:
+    """The test adapter for `queue.Speaker`: keeps every call, in order.
+
+    `events` is one list rather than a list per verb, because most of what is
+    worth asserting about the speaker's queue is ordering - a queue cleared
+    before the stop it was meant to follow is a different bug from one that is
+    never cleared. `played` and `stopped` are the two views most tests want.
+
+    Given an `inner` speaker it passes every call on after recording it, so a
+    test can watch the production adapter drive a FakeHeos without wiring it
+    up by hand. A call is recorded once it completes.
+    """
+
+    def __init__(self, inner=None):
+        self.inner = inner
+        self.events: list[tuple] = []
+        self.played: list[tuple[int, str]] = []
+        self.stopped: list[int] = []
+
+    async def play_url(self, player_id, url):
+        if self.inner is not None:
+            await self.inner.play_url(player_id, url)
+        self.played.append((player_id, url))
+        self.events.append(("play_url", url))
+
+    async def stop(self, player_id):
+        if self.inner is not None:
+            await self.inner.stop(player_id)
+        self.stopped.append(player_id)
+        self.events.append(("stop",))
+
+    async def clear_queue(self, player_id):
+        if self.inner is not None:
+            await self.inner.clear_queue(player_id)
+        self.events.append(("clear_queue",))
+
+    async def prune_queue(self, player_id):
+        if self.inner is not None:
+            await self.inner.prune_queue(player_id)
+        self.events.append(("prune_queue",))
+
+
 def queue_manager(controller=None):
     """A queue that records the URLs it sent, optionally driving a speaker.
 
-    Without a controller it records and nothing else, which is what most of
-    these tests want - and it is also the honest shape of a half-wired manager,
-    so Playback is exercised against one that cannot stop a speaker.
-
-    With one, it is wired the way `music/service.py` wires the real thing,
-    including the two callables that tidy the speaker's own queue. That is the
-    only way to test the thing the panel's stop button is actually for: leaving
-    the speakers usable by something other than HomeDash.
+    With a controller, the speaker is the production `HeosSpeaker` over it -
+    not a copy of how `music/service.py` wires one, which is what this used to
+    be, and which had already drifted from the real thing.
     """
-    played = []
-
-    async def play_url(player_id, url):
-        played.append((player_id, url))
-        if controller is not None:
-            await controller.play_url(player_id, url)
-
-    manager = QueueManager(play_url=play_url, url_for=lambda t: f"http://h/{t.id}")
-    if controller is not None:
-
-        async def stop_player(player_id):
-            await controller.transport(player_id, "stop")
-
-        async def clear_speaker_queue(player_id):
-            # Swallowed, as in `music/service.py`: HEOS errors on an empty
-            # queue and that must not fail a stop somebody asked for.
-            try:
-                await controller.clear_queue(player_id)
-            except Exception:
-                pass
-
-        manager.stop_player = stop_player
-        manager.clear_speaker_queue = clear_speaker_queue
-        manager.prune_speaker_queue = controller.prune_queue
-    return manager, played
+    speaker = RecordingSpeaker(HeosSpeaker(controller) if controller is not None else None)
+    manager = QueueManager(speaker=speaker, url_for=lambda t: f"http://h/{t.id}")
+    return manager, speaker.played
