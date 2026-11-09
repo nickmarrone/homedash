@@ -40,11 +40,36 @@ fi
 
 # --- rotation -------------------------------------------------------------
 # wlr-randr speaks wlr-output-management, which labwc implements and Mutter
-# does not. Under GNOME there is nothing to call, so say where the setting
-# lives instead of failing quietly.
+# does not. Mutter's own tool is gdctl, from mutter-common-bin.
+#
+# gdctl set describes the whole layout, so anything it does not name is turned
+# off - hence one monitor only. And a panel that is already rotated is left
+# alone: 90 is what the opposite mount needs, set in Settings -> Displays, and
+# restarting the browser must not undo it.
+rotate_gnome() {
+  local layout monitors
+  if ! command -v gdctl >/dev/null; then
+    log "gdctl not installed; rotate once in Settings -> Displays"
+    return
+  fi
+  layout="$(gdctl show 2>/dev/null)"
+  monitors="$(sed -n 's/^[^A-Za-z]*Monitor \([^ ]*\) (.*/\1/p' <<<"$layout")"
+  if [ -z "$monitors" ] || [ "$(wc -l <<<"$monitors")" -ne 1 ]; then
+    log "expected one monitor, found '${monitors//$'\n'/ }'; leaving rotation alone"
+    return
+  fi
+  if ! grep -q 'Transform: normal' <<<"$layout"; then
+    log "$monitors is already rotated; leaving it alone"
+    return
+  fi
+  log "rotating $monitors to portrait"
+  gdctl set --logical-monitor --primary --monitor "$monitors" --transform 270 \
+    || log "rotation failed"
+}
+
 if [ "$ORIENTATION" = "portrait" ]; then
   if [ "$SESSION" = "gnome" ]; then
-    log "portrait under GNOME: rotate once in Settings -> Displays (it persists)"
+    rotate_gnome
   elif command -v wlr-randr >/dev/null; then
     OUTPUT="$(wlr-randr --json 2>/dev/null | grep -m1 '"name"' | cut -d'"' -f4)"
     [ -z "$OUTPUT" ] && OUTPUT="$(wlr-randr 2>/dev/null | head -1 | cut -d' ' -f1)"
