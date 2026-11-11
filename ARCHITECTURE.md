@@ -647,7 +647,8 @@ single-calendar panel, where the legend renders nothing at all.
 
 | Module | Responsibility |
 |---|---|
-| `api.ts` | **All** types, all fetchers, and the SSE subscriber |
+| `api.ts` | **All** types and all fetchers |
+| `liveDomains.ts` | The panel's live domains: each is declared once, and this owns its first load, retry, SSE subscription, reconnect reload and rejection handling. `retry.ts` and `watchdog.ts` sit behind it |
 | `theme.css` | The whole design layer: `@font-face`, the colour tokens, the `.caps` label class. Imported once from `+layout.svelte` |
 | `format.ts` | Wall-clock string parsing — `formatTime`, `dateKey`, `formatDayHeading`, `formatHour`, `formatMasthead`, `hasPassed`, `formatSkyDate`, `addDays` |
 | `watchdog.ts` | Reloads the page if the SSE stream goes quiet, or on a fatal stream error |
@@ -827,12 +828,12 @@ panel sat on a date and an empty page indefinitely.
 
 Two things close it, and they are deliberately independent:
 
-- **Every fetch goes through `reloadEverything` or `guard`** in `+page.svelte`. A round
-  with any rejection arms `retry.ts`'s backoff — 1s, 2s, 5s, 10s, then every 30s —
+- **Every fetch is a declared live domain or goes through `live.guard`** in
+  `+page.svelte`; see `lib/liveDomains.ts`. A round with any rejection arms `retry.ts`'s backoff — 1s, 2s, 5s, 10s, then every 30s —
   which re-runs the whole round until one comes back clean. Backoff rather than a fixed
   interval because "still booting" and "down for the evening" look identical from the
   browser and want opposite things.
-- **`subscribeToUpdates` now has an `error` listener.** `EventSource` reports both of its
+- **The stream has an `error` listener.** `EventSource` reports both of its
   failure modes through that one event and they need opposite responses: a dropped
   connection leaves `readyState` at CONNECTING and the browser retries by itself, while a
   non-2xx status or wrong `Content-Type` — a proxy answering 502 through a redeploy — is
