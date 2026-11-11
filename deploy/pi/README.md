@@ -77,13 +77,17 @@ Options:
 | `--mode` | `simple` (default) or `locked`. |
 | `--session` | `auto` (default), `gnome`, or `console`. |
 | `--orientation` | `landscape` (default) or `portrait`. |
+| `--frame-top PX` / `--frame-bottom PX` | Pixels a physical frame hides along the top and bottom of the screen (default 0). The panel lays itself out inside what is left. |
 | `--user NAME` | Account the kiosk runs as. Defaults to whoever ran `sudo`. |
 | `--skip-packages` | Don't install anything. |
 | `--uninstall` | Remove all of it and stop. |
 
-It is idempotent — re-run it to change the server URL, the mode, or the
-orientation. Check the summary it prints: it names the session it detected and
-the browser it resolved, which is where a surprise shows up first.
+It is idempotent — re-run it to change the server URL, the mode, the
+orientation, or the frame margins (see
+[Fitting the panel to a frame](#fitting-the-panel-to-a-frame) for a panel
+that is already installed). Check the summary it prints: it names the session
+it detected and the browser it resolved, which is where a surprise shows up
+first.
 
 Then start it without rebooting:
 
@@ -121,6 +125,100 @@ If that hangs or fails, use the server's IP address instead and re-run
 `setup.sh`. In `locked` mode the URL is baked into the Chromium allowlist as
 well as the units, so it must be the address the panel will actually use — a
 policy allowing `homedash.local` will block a page loaded from `192.168.1.x`.
+
+---
+
+## Fitting the panel to a frame
+
+A frame over the monitor hides a strip of the screen along the top and bottom.
+Tell the panel how much, and it lays itself out inside what is left: the
+masthead moves down, the now-playing bar stops above the bottom edge, and the
+music screen fits between the two. Photos stay full-bleed, since a frame over
+a photograph is just a mat.
+
+The two margins are query parameters on the panel's URL, in CSS pixels — on
+this 1080p monitor at 100% scaling, those are screen pixels.
+
+### 1. Find the numbers
+
+Nothing needs installing to try values. On the panel, or in any browser
+pointed at the server, open:
+
+```
+http://homedash.local:8000/?frame_top=24&frame_bottom=24
+```
+
+Change the numbers and reload until the date at the top and the bar at the
+bottom sit just clear of the wood. A value that is not a number is ignored,
+and anything over 400 is capped there. Stick to whole numbers: `setup.sh`
+accepts nothing else.
+
+The bottom margin is easiest to judge with music playing, because that is
+when the bar is on screen. With nothing playing and a music library
+configured, the **Music** button at the bottom right does the same job.
+
+### 2. Make them stick
+
+Re-run `setup.sh` with the same options as last time, plus the two new ones.
+Leaving an option out does not keep its old value; it puts it back to the
+default. If you don't remember what you used, the installed script records
+it:
+
+```bash
+grep -E '^(SERVER_URL|ORIENTATION|SESSION|MODE|FRAME_TOP|FRAME_BOTTOM)=' \
+  /usr/local/bin/homedash-kiosk-start
+```
+
+`SESSION` only matters if you passed `--session` yourself. The default,
+`auto`, detects the same answer again. Then, from a checkout that includes
+this change:
+
+```bash
+cd homedash && git pull
+sudo deploy/pi/setup.sh --server http://homedash.local:8000 \
+  --orientation portrait --mode simple \
+  --frame-top 24 --frame-bottom 24
+```
+
+Check the summary's `frame:` line, then restart the kiosk at once. The
+browser is still running the old copy of the start script, and keeps its old
+URL until it restarts:
+
+```bash
+systemctl --user restart homedash-kiosk       # gnome session, as the kiosk user, from the desktop
+sudo systemctl restart homedash-kiosk         # console session
+```
+
+To confirm, the kiosk logs the URL it opened:
+
+```bash
+journalctl --user -u homedash-kiosk -n 5      # gnome session
+sudo journalctl -u homedash-kiosk -n 5        # console session
+```
+
+Look for `starting chromium at http://homedash.local:8000/?frame_top=24&frame_bottom=24`.
+
+A panel installed **before** these flags existed must go through `setup.sh`.
+Its start script has no `FRAME_TOP` line and nothing that builds the URL, so
+there is nothing to edit by hand.
+
+### Nudging the numbers later
+
+On a panel installed with these flags, the margins are two lines near the top
+of `/usr/local/bin/homedash-kiosk-start`:
+
+```bash
+FRAME_TOP="24"      # CSS px a physical frame hides, top and bottom
+FRAME_BOTTOM="24"
+```
+
+Editing them with `sudo` and restarting `homedash-kiosk` is the quick way to
+move a few pixels. The next `setup.sh` run overwrites that file, though, so
+pass the final values to `setup.sh` as well, or the edit is lost. Setting both
+to `0` removes the margins.
+
+On a `--mode locked` panel the Chromium allowlist already admits any query
+string on the server's URL, so the margins need no policy change.
 
 ---
 

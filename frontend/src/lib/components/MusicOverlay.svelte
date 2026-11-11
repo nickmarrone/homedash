@@ -201,7 +201,12 @@
 <style>
 	.overlay {
 		position: fixed;
+		/* Covers the whole screen, so the calendar never shows round its edges,
+		   but lays out inside the part a frame leaves visible. */
 		inset: 0;
+		box-sizing: border-box;
+		padding-top: var(--frame-top);
+		padding-bottom: var(--frame-bottom);
 		z-index: 40;
 		display: flex;
 		flex-direction: column;

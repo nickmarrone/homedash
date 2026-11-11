@@ -12,6 +12,8 @@ set -uo pipefail
 
 SERVER_URL="@SERVER_URL@"
 ORIENTATION="@ORIENTATION@"
+FRAME_TOP="@FRAME_TOP@"      # CSS px a physical frame hides, top and bottom
+FRAME_BOTTOM="@FRAME_BOTTOM@"
 SESSION="@SESSION@"          # gnome | console
 MODE="@MODE@"                # simple | locked
 BROWSER="@BROWSER@"
@@ -136,6 +138,17 @@ if [ "$BROWSER_IS_SNAP" != "1" ]; then
   trap cleanup EXIT
 fi
 
+# --- url ----------------------------------------------------------------
+# The frame margins ride on the URL because they belong to this panel, not to
+# the server, and the browser profile is thrown away on every start - see
+# frontend/src/lib/frame.ts. Built here rather than substituted whole by
+# setup.sh, because `&` means something in a sed replacement.
+PANEL_URL="$SERVER_URL/"
+QUERY=""
+[ "${FRAME_TOP:-0}" != "0" ] && QUERY="frame_top=$FRAME_TOP"
+[ "${FRAME_BOTTOM:-0}" != "0" ] && QUERY="${QUERY:+$QUERY&}frame_bottom=$FRAME_BOTTOM"
+[ -n "$QUERY" ] && PANEL_URL="$PANEL_URL?$QUERY"
+
 # --- run ------------------------------------------------------------------
 # Whatever started this script outlives the browser: if it crashes or is
 # killed, bring it back rather than leaving a blank rectangle on the wall
@@ -148,9 +161,9 @@ WINDOW_START=$SECONDS
 FAILURES=0
 
 while true; do
-  log "starting $BROWSER at $SERVER_URL (mode=$MODE session=$SESSION)"
+  log "starting $BROWSER at $PANEL_URL (mode=$MODE session=$SESSION)"
   STARTED_AT=$SECONDS
-  "$BROWSER" "${FLAGS[@]}" "$SERVER_URL"
+  "$BROWSER" "${FLAGS[@]}" "$PANEL_URL"
   STATUS=$?
   RAN_FOR=$((SECONDS - STARTED_AT))
 
@@ -163,7 +176,7 @@ while true; do
   if [ "$FAILURES" -ge 5 ]; then
     log "$BROWSER exited after ${RAN_FOR}s ($STATUS), $FAILURES times in a minute."
     log "  this is a startup failure, not a crash. try it by hand:"
-    log "    $BROWSER ${FLAGS[*]} $SERVER_URL"
+    log "    $BROWSER ${FLAGS[*]} '$PANEL_URL'"
     log "backing off 60s"
     sleep 60
     WINDOW_START=$SECONDS

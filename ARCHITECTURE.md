@@ -630,6 +630,7 @@ render at build time.
 `+layout.svelte` imports `lib/theme.css` and holds the global touch lockdown: `contextmenu`
 suppression via `<svelte:document>`, plus `touch-action: manipulation`,
 `-webkit-touch-callout: none`, and `user-select: none` on everything except inputs.
+It also applies the frame margins (`lib/frame.ts`) before first paint.
 
 `+page.svelte` owns all state and all data loading, and wires everything in a single
 `onMount` that returns a cleanup closure. Its header is a masthead — today's date on the
@@ -656,6 +657,7 @@ single-calendar panel, where the legend renders nothing at all.
 | `idle.ts` | Notices when nobody has touched the panel; drives the screensaver |
 | `slideshow.ts` | Pure shuffling and pairing of a photo playlist into slides |
 | `orientation.svelte.ts` | Reactive `isPortrait` from `matchMedia` |
+| `frame.ts` | Reads `?frame_top=` / `?frame_bottom=` off the kiosk URL and publishes them as `--frame-top` / `--frame-bottom` |
 | `music.svelte.ts` | The speakers, the selected one, and the commands that change them |
 | `calendarVisibility.ts` | localStorage set of hidden calendar ids |
 | `musicPreference.ts` | localStorage of the controlled speaker, and the fallback when it is gone |
@@ -854,6 +856,22 @@ exists only for the part CSS cannot do: deciding whether to *fetch* something at
 Note the width trap: portrait is 1080px wide, which is wider than most "mobile"
 breakpoints, so a width-only media query would leave seven day columns at ~150px each.
 Orientation is checked as well as width.
+
+### The frame
+
+A panel behind a physical frame loses a strip of screen at the top and bottom, and the
+browser cannot know it. `lib/frame.ts` reads the two margins from the kiosk URL (CSS px,
+written there by `deploy/pi/setup.sh --frame-top/--frame-bottom`) and sets them as custom
+properties on `<html>`; `theme.css` defaults both to 0 and derives `--visible-height`.
+They live on the URL because they belong to one physical panel, not to the server's
+settings, and the kiosk's throwaway profile would lose them from localStorage.
+
+**Anything placed against a screen edge pads by these, not by 0**: `body`, the sticky
+now-playing bar (`bottom: var(--frame-bottom)`), the music overlay, and the screensaver's
+caption. Full-screen overlays still cover `inset: 0` so nothing shows round them, and lay
+out inside the padding. Photos stay full-bleed, since a frame over a photograph is a mat,
+and `PanelBlank` is black edge to edge. A new fixed or sticky element at an edge must do
+the same, and `tools/panel/tests/frame.spec.mjs` is where to check it.
 
 ### Reading the clock
 

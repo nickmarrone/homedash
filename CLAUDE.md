@@ -844,6 +844,28 @@ was run by hand, asserted almost nothing, and started from an empty database.
   floating times are read as UTC, a midnight rollover can be swallowed, and the
   slideshow can repeat photos across a reshuffle.
 
+### Room for a picture frame (2026-11-11)
+
+The panel went into a wooden frame that hides a strip of the screen top and
+bottom, so the masthead date and the now-playing bar were partly under the
+wood.
+
+- **Configured on the kiosk URL**, `?frame_top=24&frame_bottom=24` in CSS px,
+  and written there by `setup.sh --frame-top/--frame-bottom`. Not a server
+  setting, because the frame is a property of this one panel. Not localStorage,
+  because the kiosk's browser profile is thrown away on every start.
+- **CSS variables, not measuring in JS.** `lib/frame.ts` sets `--frame-top` /
+  `--frame-bottom` on `<html>` and every rule at a screen edge reads them. The
+  overlays still cover the whole screen and lay out inside it. The photos stay
+  full-bleed, since a frame over a photo is just a mat. Only the caption moves.
+- **A bad value is ignored, and a huge one is capped at 400px**, because a
+  typo that pushed the calendar off a keyboardless wall panel would be miserable
+  to diagnose.
+
+Verified in real Chrome at both orientations (`tests/frame.spec.mjs`). The
+sticky-bar test was mutation-checked: it fails with the bar back at
+`bottom: 0`.
+
 ---
 
 ---

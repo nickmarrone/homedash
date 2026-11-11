@@ -163,7 +163,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
-		padding: 3rem 2rem 1.75rem;
+		/* The photos stay full-bleed - a frame over a photograph is just a mat -
+		   but the caption has to clear it to be read at all. */
+		padding: 3rem 2rem calc(1.75rem + var(--frame-bottom));
 		color: #fff;
 		/* A gradient rather than a solid bar: a photo's bottom edge is often
 		   sky or floor, and a hard-edged strip across it reads as a fault on a

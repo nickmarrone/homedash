@@ -5,8 +5,15 @@
 	// because the music overlay, the screensaver and the bedtime blank all
 	// render outside the page's markup and need the same tokens.
 	import '$lib/theme.css';
+	import { applyFrame, parseFrame } from '$lib/frame';
 
 	let { children } = $props();
+
+	// Applied while the script runs rather than on mount, so the first paint
+	// is already clear of the frame instead of jumping a strip downwards once
+	// mounted. Safe without a browser check: the app is built with ssr = false,
+	// so this only ever runs in the browser.
+	applyFrame(document.documentElement, parseFrame(location.search));
 
 	// A wall panel has no keyboard and no way back if a long-press or a
 	// text selection takes over the screen, so the browser's touch

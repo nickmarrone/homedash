@@ -21,6 +21,8 @@ set -euo pipefail
 
 SERVER_URL="http://homedash.local:8000"
 ORIENTATION="landscape"
+FRAME_TOP=0
+FRAME_BOTTOM=0
 KIOSK_USER="${SUDO_USER:-pi}"
 MODE="simple"
 SESSION="auto"
@@ -35,6 +37,8 @@ usage: sudo setup.sh [options]
   --mode WHICH         simple (default) or locked
   --session WHICH      auto (default), gnome, or console
   --orientation WHICH  landscape (default) or portrait
+  --frame-top PX       pixels a physical frame hides along the top (default: 0)
+  --frame-bottom PX    pixels a physical frame hides along the bottom (default: 0)
   --user NAME          account the kiosk runs as (default: the invoking user)
   --skip-packages      don't install any packages
   --uninstall          remove everything this script installs, and stop
@@ -48,6 +52,8 @@ while [ $# -gt 0 ]; do
     --mode) MODE="$2"; shift 2 ;;
     --session) SESSION="$2"; shift 2 ;;
     --orientation) ORIENTATION="$2"; shift 2 ;;
+    --frame-top) FRAME_TOP="$2"; shift 2 ;;
+    --frame-bottom) FRAME_BOTTOM="$2"; shift 2 ;;
     --user) KIOSK_USER="$2"; shift 2 ;;
     --skip-packages) SKIP_PACKAGES=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
@@ -65,6 +71,12 @@ case "$ORIENTATION" in
   landscape|portrait) ;;
   *) echo "--orientation must be landscape or portrait" >&2; exit 2 ;;
 esac
+for inset in "$FRAME_TOP" "$FRAME_BOTTOM"; do
+  if ! [[ "$inset" =~ ^[0-9]+$ ]]; then
+    echo "--frame-top and --frame-bottom take a whole number of pixels, not '$inset'" >&2
+    exit 2
+  fi
+done
 case "$MODE" in
   simple|locked) ;;
   *) echo "--mode must be simple or locked" >&2; exit 2 ;;
@@ -225,6 +237,8 @@ esac
 say "Installing scripts"
 sed -e "s|@SERVER_URL@|$SERVER_URL|g" \
     -e "s|@ORIENTATION@|$ORIENTATION|g" \
+    -e "s|@FRAME_TOP@|$FRAME_TOP|g" \
+    -e "s|@FRAME_BOTTOM@|$FRAME_BOTTOM|g" \
     -e "s|@SESSION@|$SESSION|g" \
     -e "s|@MODE@|$MODE|g" \
     -e "s|@BROWSER@|$BROWSER|g" \
@@ -378,6 +392,7 @@ cat <<EOF
   mode:        $MODE
   session:     $SESSION
   orientation: $ORIENTATION
+  frame:       top ${FRAME_TOP}px, bottom ${FRAME_BOTTOM}px
   user:        $KIOSK_USER
   browser:     $BROWSER -> $BROWSER_PATH$([ "$BROWSER_IS_SNAP" -eq 1 ] && echo " (snap)")
 

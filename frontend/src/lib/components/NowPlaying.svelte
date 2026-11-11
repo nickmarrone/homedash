@@ -73,9 +73,11 @@
 
 	/* Raised from the component's old min(48vh, 420px). On a 1920-tall portrait
 	   panel that cap left the cover small from across a kitchen, which is the
-	   distance this screen is actually read from. */
+	   distance this screen is actually read from. A share of the visible
+	   height rather than of 100vh, so a frame does not push the controls
+	   under it. */
 	.art {
-		width: min(46vh, 560px);
+		width: min(calc(var(--visible-height) * 0.46), 560px);
 		aspect-ratio: 1;
 		padding: 7px;
 		border: 1px solid var(--rule);
