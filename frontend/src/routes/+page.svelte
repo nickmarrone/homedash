@@ -66,14 +66,12 @@
 	let idleTimer: IdleTimer | null = null;
 
 	// Rotating the panel changes what needs fetching, not just how it looks:
-	// portrait shows the agenda under the calendar, so it needs both. The photo
-	// playlist changes too - which photos are the awkward ones inverts with the
-	// panel, so the slots come back different.
+	// the photo playlist changes - which photos are the awkward ones inverts with
+	// the panel, so the slots come back different.
 	const orientation = createOrientation(() => {
 		live.guard(loadEvents());
 		live.guard(loadPhotos());
 	});
-	let isPortrait = $derived(orientation.isPortrait);
 
 	// Bedtime wins over idleness: a screen that should be dark is not a screen
 	// that should be showing photographs.
@@ -199,12 +197,7 @@
 	}
 
 	function loadEvents(): Promise<unknown> {
-		// In portrait both are on screen at once, so both are fetched. The two
-		// endpoints answer different questions - the grid covers the period
-		// being navigated, the agenda is always "what is coming up next" - so
-		// one cannot be derived from the other.
-		if (view === 'agenda') return loadAgenda();
-		return Promise.all([loadGrid(), orientation.isPortrait ? loadAgenda() : null]);
+		return view === 'agenda' ? loadAgenda() : loadGrid();
 	}
 
 	// Everything on this page the server can change, declared once. Every fetch
@@ -318,12 +311,6 @@
 			<MonthGrid days={visibleDays} today={serverToday} now={serverNow} />
 		{:else}
 			<DayWeekView days={visibleDays} today={serverToday} now={serverNow} />
-		{/if}
-		{#if isPortrait}
-			<section class="upcoming">
-				<h2 class="caps">Coming up</h2>
-				<AgendaList items={visibleItems} today={serverToday} now={serverNow} />
-			</section>
 		{/if}
 	{/if}
 
@@ -486,19 +473,6 @@
 		height: 22px;
 	}
 
-
-	.upcoming {
-		margin-top: 1.75rem;
-		border-top: 1px solid var(--rule);
-		padding-top: 0.75rem;
-	}
-
-	/* "Coming up" labels the section; the day headings inside AgendaList label
-	   the groups. Two identical caps lines in a row need the air to read as a
-	   heading over a list rather than as one wrapped label. */
-	.upcoming h2 {
-		margin: 0;
-	}
 
 	/* Portrait is 1080px wide on the wall panel, so the header's two halves no
 	   longer fit on one line and the generous padding costs real estate the
