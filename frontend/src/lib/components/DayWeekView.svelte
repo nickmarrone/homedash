@@ -27,6 +27,7 @@
 	class="columns"
 	class:stacks={stacksWhenNarrow}
 	class:single={columns === 1}
+	class:dense={columns > 5}
 	style:--columns={columns}
 >
 	{#each days as day (day.date)}
@@ -119,11 +120,12 @@
 	/* Layout only; the type is .caps-sm in theme.css. */
 	.weekday {
 		display: block;
+		font-size: 0.95rem;
 	}
 
 	.daynum {
 		font-family: var(--font-display);
-		font-size: 1.6rem;
+		font-size: 2.1rem;
 		font-weight: 500;
 		line-height: 1;
 		color: var(--ink);
@@ -132,8 +134,13 @@
 	.today .daynum {
 		display: grid;
 		place-items: center;
-		width: 2.75rem;
-		height: 2.75rem;
+		flex: none;
+		/* Newsreader's lining digits sit high in their line box, which a grid
+		   centres faithfully and the eye reads as off-centre. */
+		padding-top: 0.3rem;
+		box-sizing: border-box;
+		width: 3.5rem;
+		height: 3.5rem;
 		border-radius: var(--radius-pill);
 		background: var(--ink);
 		color: var(--paper);
@@ -144,13 +151,20 @@
 	   label in the row that is making a claim rather than naming a column. */
 	.flag {
 		margin-left: auto;
+		font-size: 0.95rem;
 		color: var(--ink);
+	}
+
+	/* Seven columns at 1080px leave ~150px a day: the disc already says which
+	   one is today, and the word would run into the next heading. */
+	.dense .flag {
+		display: none;
 	}
 
 	.empty {
 		margin: 0;
 		padding-left: 0.8rem;
-		font-size: 0.9rem;
+		font-size: 1.1rem;
 		font-style: italic;
 		color: var(--ink-trace);
 	}
@@ -206,8 +220,7 @@
 	   title, where - the way the agenda below it does. Day view is always that
 	   wide; week and the 5-day lookahead become that wide once they stack. Narrow
 	   columns cannot do it and keep stacking the three parts instead. */
-	.single li,
-	.columns.stacks li {
+	.single li {
 		flex-direction: row;
 		align-items: baseline;
 		gap: 1rem;
@@ -215,36 +228,33 @@
 		padding-bottom: 0.3rem;
 	}
 
-	.single .time,
-	.columns.stacks .time {
+	.single .time {
 		min-width: 8ch;
-		font-size: 0.9375rem;
+		font-size: 1.2rem;
 	}
 
-	.single .title,
-	.columns.stacks .title {
-		font-size: 1.1875rem;
+	.single .title {
+		font-size: 1.5rem;
 	}
 
-	.single .location,
-	.columns.stacks .location {
+	.single .location {
 		margin-left: auto;
-		font-size: 0.9375rem;
+		font-size: 1.2rem;
 	}
 
 	.time {
-		font-size: 0.8rem;
+		font-size: 1.05rem;
 		color: var(--ink-muted);
 	}
 
 	.title {
-		font-size: 1rem;
+		font-size: 1.4rem;
 		font-weight: 500;
 		color: var(--ink);
 	}
 
 	.location {
-		font-size: 0.8rem;
+		font-size: 1.05rem;
 		color: var(--ink-muted);
 	}
 
@@ -260,7 +270,35 @@
 	   Stacked, the rules turn horizontal and today's ink edge is bled into the
 	   page's own margin so the white band reads as a strip across the panel
 	   rather than a box floating in it. */
-	@media (max-width: 60rem), (orientation: portrait) {
+	@media (max-width: 60rem) {
+		.dense .flag {
+			display: block;
+		}
+
+		/* One line per event, as in the agenda below: the stacked column has
+		   the whole panel width to itself. */
+		.columns.stacks li {
+			flex-direction: row;
+			align-items: baseline;
+			gap: 1rem;
+			padding-top: 0.3rem;
+			padding-bottom: 0.3rem;
+		}
+
+		.columns.stacks .time {
+			min-width: 8ch;
+			font-size: 1.2rem;
+		}
+
+		.columns.stacks .title {
+			font-size: 1.5rem;
+		}
+
+		.columns.stacks .location {
+			margin-left: auto;
+			font-size: 1.2rem;
+		}
+
 		.columns.stacks {
 			grid-template-columns: minmax(0, 1fr);
 			border-top: none;
@@ -280,6 +318,37 @@
 			margin: 0 -0.85rem;
 			padding-left: 1.7rem;
 			padding-right: 1.7rem;
+		}
+	}
+
+	/* A week on a portrait panel: seven columns leave ~150px a day, which wraps
+	   most titles, and stacking wastes the width. Three over four keeps every
+	   day a real column (~340px, then ~257px) at the cost of a second row. The
+	   lower bound is the stacking breakpoint above, so the two never overlap. */
+	@media (orientation: portrait) and (min-width: 60.01rem) {
+		.dense {
+			grid-template-columns: repeat(12, minmax(0, 1fr));
+		}
+
+		.dense section {
+			grid-column: span 3;
+			border-bottom: 1px solid var(--rule);
+		}
+
+		.dense section:nth-child(-n + 3) {
+			grid-column: span 4;
+		}
+
+		.dense section:nth-child(3) {
+			border-right: none;
+		}
+
+		.dense section:nth-child(n + 4) {
+			min-height: 10rem;
+		}
+
+		.dense .flag {
+			display: block;
 		}
 	}
 

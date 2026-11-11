@@ -185,8 +185,18 @@ browser is still running the old copy of the start script, and keeps its old
 URL until it restarts:
 
 ```bash
-systemctl --user restart homedash-kiosk       # gnome session, as the kiosk user, from the desktop
-sudo systemctl restart homedash-kiosk         # console session
+systemctl --user daemon-reload && systemctl --user restart homedash-kiosk   # gnome session, as the kiosk user, from the desktop
+sudo systemctl daemon-reload && sudo systemctl restart homedash-kiosk       # console session
+```
+
+The start script closes any Chromium still open from the last run before it
+launches its own. A start script installed before that existed doesn't, and on
+Ubuntu's snap a restart then leaves the old browser up and stacks a new window
+on it every few seconds. To get out of that, stop the kiosk, kill the browser,
+then start it again:
+
+```bash
+systemctl --user stop homedash-kiosk; pkill -9 -f /snap/chromium/; systemctl --user reset-failed homedash-kiosk; systemctl --user start homedash-kiosk
 ```
 
 To confirm, the kiosk logs the URL it opened:
@@ -419,6 +429,15 @@ working first.
 
 **The Pi boots to a text console.** An early run of this script set the default
 target to `multi-user` on a desktop image. See [Recovery](#recovery).
+
+**Windows keep opening on top of each other** after a restart, each taking
+the screen from the last, or a browser fills only part of the screen. A snap
+Chromium does not stay inside the kiosk unit (snapd moves it into a scope of its
+own), so stopping the unit left it running and every relaunch handed it one
+more window. The start script now closes it first and the units close it on
+stop. On an install from before that, re-run `setup.sh`, then clear it once by
+hand with the stop, `pkill`, start line under
+[Fitting the panel to a frame](#fitting-the-panel-to-a-frame).
 
 **The browser restarts over and over.** Look for the backoff message —
 `kiosk-start.sh` gives up hammering after five failures in a minute and prints
