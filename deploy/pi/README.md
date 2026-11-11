@@ -221,10 +221,23 @@ Settings cannot quietly undo it.
 
 ## Rotation
 
-**Under GNOME**, rotate once in Settings → Displays. It persists in
-`monitors.xml`, and GNOME maps touch input to the rotated output for you.
-`--orientation portrait` only logs a pointer to this — there is no
-wlr-output-management for it to call.
+**Under GNOME**, `--orientation portrait` rotates the panel at startup with
+`gdctl`. It turns 270°; for the opposite mount, choose 90° once in Settings →
+Displays and startup will leave it alone. It only acts on a single monitor,
+because `gdctl set` turns off anything it is not told about.
+
+Two one-time steps finish the job, both run in the desktop session. Save the
+rotation, tapping **Keep Changes** when GNOME asks; otherwise the browser opens
+while the screen is still turning and does not end up fullscreen:
+
+    gdctl set --persistent --logical-monitor --primary --monitor HDMI-2 --transform 270
+
+And bind the touchscreen to the monitor if taps land as though the screen were
+not rotated, using the IDs from `/proc/bus/input/devices` and `gdctl show`
+(these are the InnoView's):
+
+    gsettings set org.gnome.desktop.peripherals.touchscreen:/org/gnome/desktop/peripherals/touchscreens/222a:0001/ \
+      output "['YCT', 'InnoView', '0x00000000']"
 
 **Under labwc**, `--orientation portrait` applies a `transform 90` to the
 output at startup via `wlr-randr`, because labwc has no output-transform
