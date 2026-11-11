@@ -28,6 +28,10 @@ Environment=HOME=/home/@KIOSK_USER@
 # lifetime is bounded by the compositor's and there is no ordering race
 # between the two.
 ExecStart=/usr/bin/labwc -s /usr/local/bin/homedash-kiosk-start
+# A snap browser escapes this unit's cgroup, so stopping the unit does not
+# close it - and a browser left open captures the next launch as one more
+# window. See kiosk-start.sh. The "-" keeps a failure here from failing the stop.
+ExecStopPost=-/usr/local/bin/homedash-kiosk-start stop
 
 Restart=always
 RestartSec=5

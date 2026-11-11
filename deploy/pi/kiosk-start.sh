@@ -26,6 +26,59 @@ if [ -z "$BROWSER" ] || ! command -v "$BROWSER" >/dev/null; then
   exit 1
 fi
 
+# --- a browser left over from the last run --------------------------------
+# A snap app does not stay in the cgroup of the unit that launched it: `snap
+# run` moves it into a transient scope of its own (snap.<name>.<app>-*.scope),
+# so stopping or restarting homedash-kiosk ends this script and leaves the
+# browser running. The next launch shares that browser's profile - the snap
+# cannot have a throwaway one, see PROFILE below - so Chromium's single-instance
+# check hands the URL to the old process as one more window and exits at once.
+# The loop at the bottom reads that as a browser that died in under a second
+# and launches again in 3s: a new fullscreen window every few seconds, each
+# taking focus from the last.
+#
+# So a confined browser is cleared out before every launch, and by the units'
+# ExecStopPost (`homedash-kiosk-start stop`) when the kiosk stops. That also
+# closes a Chromium somebody opened by hand from the same snap, which on a
+# kiosk is the right call: it would have captured the panel's launch anyway.
+# The non-snap path needs none of this - its browser dies with the unit, and a
+# stale instance cannot capture a launch with a fresh --user-data-dir.
+snap_name_of() {
+  local entry real
+  entry="$(command -v "$1")"
+  real="$(readlink -f "$entry")"
+  case "$entry" in
+    /snap/bin/*) entry="${entry#/snap/bin/}"; echo "${entry%%.*}"; return ;;
+  esac
+  case "$real" in
+    /snap/*) real="${real#/snap/}"; echo "${real%%/*}"; return ;;
+  esac
+}
+
+SNAP_NAME=""
+[ "$BROWSER_IS_SNAP" = "1" ] && SNAP_NAME="$(snap_name_of "$BROWSER")"
+
+clear_stray_browser() {
+  [ -n "$SNAP_NAME" ] || return 0
+  local pattern="^/snap/$SNAP_NAME/" uid
+  uid="$(id -u)"
+  pgrep -u "$uid" -f "$pattern" >/dev/null || return 0
+  log "a $SNAP_NAME browser is already open; closing it before starting ours"
+  pkill -TERM -u "$uid" -f "$pattern"
+  for _ in $(seq 20); do
+    pgrep -u "$uid" -f "$pattern" >/dev/null || return 0
+    sleep 0.5
+  done
+  log "it did not close in 10s; killing it"
+  pkill -KILL -u "$uid" -f "$pattern"
+  sleep 1
+}
+
+if [ "${1:-}" = "stop" ]; then
+  clear_stray_browser
+  exit 0
+fi
+
 # --- desktop settings -----------------------------------------------------
 # Applied here rather than in setup.sh because this runs inside the session,
 # where the bus these need already exists - and because re-applying them every
@@ -161,6 +214,7 @@ WINDOW_START=$SECONDS
 FAILURES=0
 
 while true; do
+  clear_stray_browser
   log "starting $BROWSER at $PANEL_URL (mode=$MODE session=$SESSION)"
   STARTED_AT=$SECONDS
   "$BROWSER" "${FLAGS[@]}" "$PANEL_URL"
