@@ -186,26 +186,16 @@ test('tap targets are at least the 48px this project promises', async ({ page, p
 });
 
 test.describe('orientation', () => {
-  test('portrait shows what is coming up under the calendar, landscape does not', async ({
-    page,
-    panel,
-  }, testInfo) => {
+  test('no orientation shows an agenda under the calendar', async ({ page, panel }) => {
     await panel.open();
-    const upcoming = page.locator('.upcoming');
-    if (testInfo.project.name === 'portrait') {
-      await expect(upcoming.getByText('Swimming')).toBeVisible();
-    } else {
-      await expect(upcoming).toHaveCount(0);
-    }
+    await expect(page.locator('.upcoming')).toHaveCount(0);
   });
 
   test('rotating refetches for the new shape', async ({ page, api, panel }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await panel.open();
-    await expect(page.locator('.upcoming')).toHaveCount(0);
 
     await page.setViewportSize({ width: 1080, height: 1920 });
-    await expect(page.locator('.upcoming').getByText('Swimming')).toBeVisible();
     await expect.poll(() => api.count('GET /api/photos?orientation=portrait')).toBeGreaterThan(0);
   });
 });
