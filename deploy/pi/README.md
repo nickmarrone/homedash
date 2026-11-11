@@ -77,12 +77,20 @@ Options:
 | `--mode` | `simple` (default) or `locked`. |
 | `--session` | `auto` (default), `gnome`, or `console`. |
 | `--orientation` | `landscape` (default) or `portrait`. |
+| `--frame-top PX` / `--frame-bottom PX` | Pixels a physical frame hides along the top and bottom of the screen (default 0). The panel lays itself out inside what is left. |
 | `--user NAME` | Account the kiosk runs as. Defaults to whoever ran `sudo`. |
 | `--skip-packages` | Don't install anything. |
 | `--uninstall` | Remove all of it and stop. |
 
-It is idempotent — re-run it to change the server URL, the mode, or the
-orientation. Check the summary it prints: it names the session it detected and
+It is idempotent — re-run it to change the server URL, the mode, the
+orientation, or the frame margins.
+
+**Finding the frame margins.** They are plain query parameters on the panel's
+URL, so they can be tuned in any browser before committing them here: open
+`http://homedash.local:8000/?frame_top=24&frame_bottom=24` on the panel and
+adjust until the masthead date and the bottom bar sit just clear of the wood.
+They are CSS pixels, which on this 1080p monitor at 100% scaling are screen
+pixels. Check the summary it prints: it names the session it detected and
 the browser it resolved, which is where a surprise shows up first.
 
 Then start it without rebooting:

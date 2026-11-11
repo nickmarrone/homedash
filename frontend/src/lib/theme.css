@@ -154,6 +154,15 @@
 	   art and swatches. */
 	--radius-pill: 999px;
 	--radius-sm: 4px;
+
+	/* How much of the screen a physical frame hides at the top and bottom.
+	   Zero here; lib/frame.ts overrides both from the kiosk URL. Anything
+	   placed against a screen edge - the page, the sticky now-playing bar,
+	   every full-screen overlay - pads by these rather than by 0, and
+	   --visible-height is the viewport height that is actually on show. */
+	--frame-top: 0px;
+	--frame-bottom: 0px;
+	--visible-height: calc(100vh - var(--frame-top) - var(--frame-bottom));
 }
 
 /* Light, committed. Not `light dark`: this palette has no dark counterpart, and
@@ -166,6 +175,10 @@ html {
 
 body {
 	margin: 0;
+	/* Clear of the frame. Padding rather than margin so the strip under the
+	   wood is still the paper ground, not the html background. */
+	padding-top: var(--frame-top);
+	padding-bottom: var(--frame-bottom);
 	background: var(--paper);
 	color: var(--ink);
 	font-family: var(--font-body);

@@ -157,12 +157,14 @@ class Panel {
     this.api = api;
   }
 
-  /** Open the panel, optionally on a remembered view. */
-  async open({ view } = {}) {
+  /** Open the panel, optionally on a remembered view, and optionally at a URL
+   * other than the root - the kiosk's query string is how a panel is told
+   * about its frame. */
+  async open({ view, path = '/' } = {}) {
     if (view) {
       await this.page.addInitScript((v) => localStorage.setItem('homedash:view', v), view);
     }
-    await this.page.goto('/');
+    await this.page.goto(path);
     if (view === 'agenda') await this.heartbeat();
     await expect(this.page.locator('h1')).toBeVisible();
   }

@@ -454,7 +454,9 @@
 	   exactly when there is most to look at. */
 	.music-slot {
 		position: sticky;
-		bottom: 0;
+		/* Sticks to the bottom of what is on show, not of the screen - the
+		   last strip of the screen may be under a frame (see lib/frame.ts). */
+		bottom: var(--frame-bottom);
 		z-index: 20;
 		padding-top: 1rem;
 		margin-top: 1.5rem;
